@@ -320,12 +320,11 @@ export type LaserAuthRequest = z.infer<typeof laserAuthRequestSchema>;
 // API Configuration table
 export const apiConfigs = sqliteTable("api_configs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  machineMonitorApiKey: text("machine_monitor_api_key").notNull(),
-  machineMonitorApiUrl: text("machine_monitor_api_url").notNull(),
-  syncEnabled: integer("sync_enabled", { mode: "boolean" }).notNull().default(true),
-  syncInterval: integer("sync_interval").notNull().default(5),
-  // Alert system settings
-  alertsEnabled: integer("alerts_enabled", { mode: "boolean" }).notNull().default(true),
+  shopMonitorApiKey: text("machine_monitor_api_key").notNull(),
+  shopMonitorApiUrl: text("machine_monitor_api_url").notNull(),
+  syncEnabled: integer("sync_enabled", { mode: "boolean" }).notNull().default(false),
+  syncInterval: integer("sync_interval").notNull().default(60),
+  alertsEnabled: integer("alerts_enabled", { mode: "boolean" }).notNull().default(false),
   pushUserData: integer("push_user_data", { mode: "boolean" }).notNull().default(true),
   pushLocationData: integer("push_location_data", { mode: "boolean" }).notNull().default(true),
   pushMachineData: integer("push_machine_data", { mode: "boolean" }).notNull().default(true),
@@ -335,8 +334,8 @@ export const apiConfigs = sqliteTable("api_configs", {
 });
 
 export const insertApiConfigSchema = createInsertSchema(apiConfigs).pick({
-  machineMonitorApiKey: true,
-  machineMonitorApiUrl: true,
+  shopMonitorApiKey: true,
+  shopMonitorApiUrl: true,
   syncEnabled: true,
   syncInterval: true,
   alertsEnabled: true,
@@ -349,7 +348,7 @@ export const insertApiConfigSchema = createInsertSchema(apiConfigs).pick({
 // Machine Alerts table for bidirectional communication
 export const machineAlerts = sqliteTable("machine_alerts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  machineId: text("machine_id").notNull(), // Machine identifier (can be from NooyenMachineMonitor)
+  machineId: text("machine_id").notNull(), // Machine identifier (can be from ShopMonitor)
   senderId: integer("sender_id"), // User who sent the alert (null if from machine)
   message: text("message").notNull(),
   alertType: text("alert_type", { enum: ["help_request", "notification", "warning", "error"] }).notNull(),

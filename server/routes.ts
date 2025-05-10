@@ -40,7 +40,14 @@ const isAdmin = (req: Request, res: Response, next: Function) => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // *** NooyenMachineMonitor API Integration Endpoints ***
+  await setupAuth(app);
+  
+  // Root route
+  app.get('/', (_req, res) => {
+    res.json({ message: 'ShopTracker API is running' });
+  });
+  
+  // *** ShopMonitor API Integration Endpoints ***
   
   // Development utility route to reset users table and recreate default admin
   app.post("/api/dev/reset-users", async (req, res) => {
@@ -1233,7 +1240,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // External API Alert Endpoint (for NooyenMachineMonitor)
+  // External API Alert Endpoint (for ShopMonitor)
   app.post("/api/external/machine-alert", async (req, res) => {
     try {
       // Validate request has API key
@@ -1248,7 +1255,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Validate API key against stored key
       const config = await storage.getApiConfig();
-      if (!config || config.machineMonitorApiKey !== apiKey) {
+      if (!config || config.shopMonitorApiKey !== apiKey) {
         return res.status(401).json({ 
           success: false,
           message: "Invalid API key" 
@@ -1291,8 +1298,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const config = await storage.getApiConfig();
       if (!config) {
         return res.json({
-          machineMonitorApiKey: "",
-          machineMonitorApiUrl: "",
+          shopMonitorApiKey: "",
+          shopMonitorApiUrl: "",
           syncEnabled: false,
           syncInterval: 60
         });
@@ -1317,10 +1324,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/api-config/test", isAdmin, async (req, res) => {
     try {
-      const { machineMonitorApiUrl, machineMonitorApiKey } = req.body;
+      const { shopMonitorApiUrl, shopMonitorApiKey } = req.body;
       
       // Validate required fields
-      if (!machineMonitorApiUrl || !machineMonitorApiKey) {
+      if (!shopMonitorApiUrl || !shopMonitorApiKey) {
         return res.status(400).json({ 
           success: false, 
           message: "API URL and API Key are required" 
@@ -1329,11 +1336,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Attempt to make an actual API call to test the connection
       try {
-        const response = await fetch(`${machineMonitorApiUrl}/api/ping`, {
+        const response = await fetch(`${shopMonitorApiUrl}/api/ping`, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
-            'x-api-key': machineMonitorApiKey
+            'x-api-key': shopMonitorApiKey
           }
         });
 
@@ -1341,14 +1348,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const data = await response.json();
           res.json({ 
             success: true, 
-            message: "Connection to NooyenMachineMonitor API successful",
+            message: "Connection to ShopMonitor API successful",
             data
           });
         } else {
           const errorText = await response.text();
           res.status(400).json({ 
             success: false, 
-            message: `Failed to connect to NooyenMachineMonitor API: ${response.status} ${errorText}` 
+            message: `Failed to connect to ShopMonitor API: ${response.status} ${errorText}` 
           });
         }
       } catch (fetchError) {
@@ -1362,7 +1369,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error testing API connection:", error);
       res.status(500).json({ 
         success: false, 
-        message: "Error testing connection to NooyenMachineMonitor API" 
+        message: "Error testing connection to ShopMonitor API" 
       });
     }
   });

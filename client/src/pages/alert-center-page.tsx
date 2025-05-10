@@ -32,7 +32,7 @@ export default function AlertCenterPage() {
               Machine Alerts
             </CardTitle>
             <CardDescription>
-              Monitor and respond to alerts from NooyenMachineMonitor and NooyenUSATracker
+              Monitor and respond to alerts from MachineMonitor and ShopTracker
             </CardDescription>
           </CardHeader>
           <CardContent>

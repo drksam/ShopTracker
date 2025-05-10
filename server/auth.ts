@@ -55,7 +55,7 @@ export async function setupAuth(app: Express) {
   await ensureDefaultAdmin();
   
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "nooyen-workshop-management-secret",
+    secret: process.env.SESSION_SECRET || "shop-workshop-management-secret",
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,

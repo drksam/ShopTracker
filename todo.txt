@@ -1,0 +1,47 @@
+# ShopTracker TODO List
+
+## Error Handling
+- Improve error handling in storage.ts methods to handle database errors consistently
+- Add more detailed error messages in API responses rather than generic "Failed to..." messages
+- Implement better error logging throughout the application instead of console.error
+
+## Sync Manager
+- Complete implementation of pullAccessLogs in sync.ts to properly handle edge cases
+- Add retry mechanisms for failed sync operations
+- Implement better error recovery in sync operations
+- Add unit tests for sync functionality
+
+## Security
+- Review and improve input validation across API endpoints
+- Add rate limiting for authentication endpoints to prevent brute force attacks
+- Implement CSRF protection for API requests
+- Review permission checks across all endpoints
+
+## Performance
+- Optimize database queries in storage.ts, especially for large datasets
+- Add database indexes for frequently queried fields
+- Implement pagination for endpoints that return large datasets (audit logs, orders)
+
+## UI/UX
+- Add loading indicators during sync operations
+- Implement better error visualizations in the UI
+- Add offline mode support for critical operations
+- Improve mobile responsiveness in complex views
+
+## Testing
+- Add unit tests for critical business logic
+- Implement integration tests for API endpoints
+- Add end-to-end tests for critical user flows
+- Set up CI/CD pipeline for automated testing
+
+## Documentation
+- Add API documentation for all endpoints
+- Document database schema and relationships
+- Add developer setup instructions
+- Create user guides for all features
+
+## Refactoring
+- ✅ Fix the side effects in use-toast.ts (noted with "! Side effects !" comment)
+- ✅ Replace any instances of "any" type with proper types in storage.ts
+- Standardize error handling patterns across the application
+- Consider extracting database operations into separate service classes

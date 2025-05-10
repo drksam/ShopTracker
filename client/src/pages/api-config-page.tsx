@@ -49,8 +49,8 @@ import { Separator } from "@/components/ui/separator";
 
 // Form validation schema
 const apiConfigSchema = z.object({
-  machineMonitorApiKey: z.string().min(1, "API key is required"),
-  machineMonitorApiUrl: z.string().url("Must be a valid URL"),
+  shopMonitorApiKey: z.string().min(1, "API key is required"),
+  shopMonitorApiUrl: z.string().url("Must be a valid URL"),
   syncEnabled: z.boolean().default(true),
   syncInterval: z.number().int().min(1, "Interval must be at least 1 minute"),
   alertsEnabled: z.boolean().default(true),
@@ -73,8 +73,8 @@ export default function ApiConfigPage() {
   const form = useForm<ApiConfig>({
     resolver: zodResolver(apiConfigSchema),
     defaultValues: {
-      machineMonitorApiKey: "",
-      machineMonitorApiUrl: "https://api.machinemanager.nooyen.com",
+      shopMonitorApiKey: "",
+      shopMonitorApiUrl: "https://api.shopmonitor.app",
       syncEnabled: true,
       syncInterval: 5,
       alertsEnabled: true,
@@ -190,7 +190,7 @@ export default function ApiConfigPage() {
         <CardHeader>
           <CardTitle>API Configuration</CardTitle>
           <CardDescription>
-            Configure the connection to the NooyenMachineMonitor service.
+            Configure the connection to the ShopMonitor service.
             This will allow for synchronization of RFID cards and access logs.
           </CardDescription>
         </CardHeader>
@@ -200,7 +200,7 @@ export default function ApiConfigPage() {
               <div className="grid gap-6 md:grid-cols-2">
                 <FormField
                   control={form.control}
-                  name="machineMonitorApiKey"
+                  name="shopMonitorApiKey"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>API Key</FormLabel>
@@ -215,7 +215,7 @@ export default function ApiConfigPage() {
                         </div>
                       </FormControl>
                       <FormDescription>
-                        The API key for authenticating with the NooyenMachineMonitor service.
+                        The API key for authenticating with the ShopMonitor service.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -224,7 +224,7 @@ export default function ApiConfigPage() {
 
                 <FormField
                   control={form.control}
-                  name="machineMonitorApiUrl"
+                  name="shopMonitorApiUrl"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>API URL</FormLabel>
@@ -235,7 +235,7 @@ export default function ApiConfigPage() {
                         />
                       </FormControl>
                       <FormDescription>
-                        The base URL for the NooyenMachineMonitor API.
+                        The base URL for the ShopMonitor API.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -258,7 +258,7 @@ export default function ApiConfigPage() {
                       <div className="space-y-1 leading-none">
                         <FormLabel>Enable Synchronization</FormLabel>
                         <FormDescription>
-                          Automatically sync RFID cards and access logs from NooyenMachineMonitor.
+                          Automatically sync RFID cards and access logs from ShopMonitor.
                         </FormDescription>
                       </div>
                     </FormItem>
@@ -281,7 +281,7 @@ export default function ApiConfigPage() {
                         />
                       </FormControl>
                       <FormDescription>
-                        How often to check for updates from NooyenMachineMonitor.
+                        How often to check for updates from ShopMonitor.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -308,7 +308,7 @@ export default function ApiConfigPage() {
                       <div className="space-y-1 leading-none">
                         <FormLabel>Enable Alerts System</FormLabel>
                         <FormDescription>
-                          Enable bidirectional alerts between NooyenUSATracker and NooyenMachineMonitor.
+                          Enable bidirectional alerts between ShopTracker and ShopMonitor.
                         </FormDescription>
                       </div>
                     </FormItem>
@@ -329,7 +329,7 @@ export default function ApiConfigPage() {
                       <div className="space-y-1 leading-none">
                         <FormLabel>Pull Access Logs</FormLabel>
                         <FormDescription>
-                          Pull access logs from NooyenMachineMonitor to track machine usage.
+                          Pull access logs from ShopMonitor to track machine usage.
                         </FormDescription>
                       </div>
                     </FormItem>
@@ -352,7 +352,7 @@ export default function ApiConfigPage() {
                       <div className="space-y-1 leading-none">
                         <FormLabel>Push User Data</FormLabel>
                         <FormDescription>
-                          Send user data to NooyenMachineMonitor.
+                          Send user data to ShopMonitor.
                         </FormDescription>
                       </div>
                     </FormItem>
@@ -373,7 +373,7 @@ export default function ApiConfigPage() {
                       <div className="space-y-1 leading-none">
                         <FormLabel>Push Location Data</FormLabel>
                         <FormDescription>
-                          Send location data to NooyenMachineMonitor.
+                          Send location data to ShopMonitor.
                         </FormDescription>
                       </div>
                     </FormItem>
@@ -394,7 +394,7 @@ export default function ApiConfigPage() {
                       <div className="space-y-1 leading-none">
                         <FormLabel>Push Machine Data</FormLabel>
                         <FormDescription>
-                          Send machine configuration to NooyenMachineMonitor.
+                          Send machine configuration to ShopMonitor.
                         </FormDescription>
                       </div>
                     </FormItem>
@@ -451,7 +451,7 @@ export default function ApiConfigPage() {
         <CardHeader>
           <CardTitle>Synchronization Status</CardTitle>
           <CardDescription>
-            Monitor the synchronization status between NooyenUSATracker and NooyenMachineMonitor.
+            Monitor the synchronization status between ShopTracker and ShopMonitor.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -467,14 +467,14 @@ export default function ApiConfigPage() {
         <CardHeader>
           <CardTitle>API Documentation</CardTitle>
           <CardDescription>
-            Detailed information about the integration with NooyenMachineMonitor API.
+            Detailed information about the integration with ShopMonitor API.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div>
             <h3 className="text-lg font-medium mb-2">Overview</h3>
             <p className="text-muted-foreground mb-4">
-              NooyenUSATracker integrates with NooyenMachineMonitor to enable bidirectional communication for machine alerts, 
+              ShopTracker integrates with ShopMonitor to enable bidirectional communication for machine alerts, 
               access control, and data synchronization. This integration allows machine operators to receive real-time notifications, 
               administrators to monitor machine access, and ensures data consistency across both systems.
             </p>
@@ -487,13 +487,13 @@ export default function ApiConfigPage() {
             <p className="text-muted-foreground mb-4">
               All API requests require authentication using an API key. The API key should be included in the 
               <code className="bg-muted px-1 py-0.5 rounded text-sm mx-1">X-API-Key</code> 
-              header for all requests to the NooyenMachineMonitor API.
+              header for all requests to the ShopMonitor API.
             </p>
             
             <div className="bg-muted p-4 rounded-md">
               <code className="block whitespace-pre text-sm">
 {`// Example API request with authentication
-fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
+fetch('https://api.shopmonitor.app/api/sync/status', {
   method: 'GET',
   headers: {
     'Content-Type': 'application/json',
@@ -512,13 +512,13 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
             <div className="relative overflow-x-auto mt-4">
               <Tabs defaultValue="inbound">
                 <TabsList className="mb-4">
-                  <TabsTrigger value="inbound">Endpoints NooyenMachineMonitor Provides</TabsTrigger>
+                  <TabsTrigger value="inbound">Endpoints ShopMonitor Provides</TabsTrigger>
                   <TabsTrigger value="outbound">Endpoints We Call</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="inbound">
                   <Table>
-                    <TableCaption>NooyenMachineMonitor Inbound API Endpoints</TableCaption>
+                    <TableCaption>ShopMonitor Inbound API Endpoints</TableCaption>
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-[300px]">Endpoint</TableHead>
@@ -540,17 +540,17 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
                       <TableRow>
                         <TableCell className="font-mono text-sm">/integration/api/alerts</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Send alerts from NooyenUSATracker to NooyenMachineMonitor</TableCell>
+                        <TableCell>Send alerts from ShopTracker to ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">/integration/api/alerts/:id/acknowledge</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Acknowledge an alert in NooyenMachineMonitor</TableCell>
+                        <TableCell>Acknowledge an alert in ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">/integration/api/alerts/:id/resolve</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Resolve an alert in NooyenMachineMonitor</TableCell>
+                        <TableCell>Resolve an alert in ShopMonitor</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -558,7 +558,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
                 
                 <TabsContent value="outbound">
                   <Table>
-                    <TableCaption>API Endpoints We Call on NooyenMachineMonitor</TableCaption>
+                    <TableCaption>API Endpoints We Call on ShopMonitor</TableCaption>
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-[300px]">Endpoint</TableHead>
@@ -570,42 +570,42 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/sync/users`}</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Push user data to NooyenUSATracker</TableCell>
+                        <TableCell>Push user data to ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/sync/locations`}</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Push location (zone) data to NooyenUSATracker</TableCell>
+                        <TableCell>Push location (zone) data to ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/sync/machines`}</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Push machine configuration to NooyenUSATracker</TableCell>
+                        <TableCell>Push machine configuration to ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/sync/accesslogs`}</TableCell>
                         <TableCell>GET</TableCell>
-                        <TableCell>Get access logs from NooyenUSATracker</TableCell>
+                        <TableCell>Get access logs from ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/sync/alerts`}</TableCell>
                         <TableCell>GET</TableCell>
-                        <TableCell>Get pending alerts from NooyenUSATracker</TableCell>
+                        <TableCell>Get pending alerts from ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/alerts`}</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Send an alert to NooyenUSATracker</TableCell>
+                        <TableCell>Send an alert to ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/alerts/:id/acknowledge`}</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Acknowledge an alert in NooyenUSATracker</TableCell>
+                        <TableCell>Acknowledge an alert in ShopMonitor</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-mono text-sm">{`{api_base_url}/api/alerts/:id/resolve`}</TableCell>
                         <TableCell>POST</TableCell>
-                        <TableCell>Resolve an alert in NooyenUSATracker</TableCell>
+                        <TableCell>Resolve an alert in ShopMonitor</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -622,7 +622,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
             <h4 className="font-medium mt-4 mb-2">User</h4>
             <div className="bg-muted p-4 rounded-md">
               <code className="block whitespace-pre text-sm">
-{`// NooyenMachineMonitor User Structure
+{`// ShopMonitor User Structure
 {
   "id": 1,
   "rfid_tag": "0123456789",
@@ -633,7 +633,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
   "is_admin_override": false
 }
 
-// NooyenUSATracker User Structure
+// ShopTracker User Structure
 {
   "id": 1,
   "username": "user123",
@@ -648,7 +648,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
             <h4 className="font-medium mt-4 mb-2">Machine</h4>
             <div className="bg-muted p-4 rounded-md">
               <code className="block whitespace-pre text-sm">
-{`// NooyenMachineMonitor Machine Structure
+{`// ShopMonitor Machine Structure
 {
   "id": 1,
   "machine_id": "W1",
@@ -662,7 +662,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
   "node_port": 0
 }
 
-// NooyenUSATracker Machine Structure
+// ShopTracker Machine Structure
 {
   "id": 1,
   "name": "Welding Machine 1",
@@ -675,14 +675,14 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
             <h4 className="font-medium mt-4 mb-2">Location/Zone</h4>
             <div className="bg-muted p-4 rounded-md">
               <code className="block whitespace-pre text-sm">
-{`// NooyenMachineMonitor Zone Structure
+{`// ShopMonitor Zone Structure
 {
   "id": 1,
   "name": "Shop Floor",
   "description": "Main manufacturing area"
 }
 
-// NooyenUSATracker Location Structure
+// ShopTracker Location Structure
 {
   "id": 1,
   "name": "Shop Floor",
@@ -698,7 +698,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
             <h4 className="font-medium mt-4 mb-2">Node</h4>
             <div className="bg-muted p-4 rounded-md">
               <code className="block whitespace-pre text-sm">
-{`// NooyenMachineMonitor Node Structure
+{`// ShopMonitor Node Structure
 {
   "id": 1,
   "node_id": "esp32_001",
@@ -780,7 +780,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
             <h4 className="font-medium mt-4 mb-2">Alert Structure</h4>
             <div className="bg-muted p-4 rounded-md">
               <code className="block whitespace-pre text-sm">
-{`// NooyenMachineMonitor Alert Structure
+{`// ShopMonitor Alert Structure
 {
   "id": 1,
   "external_id": 42,
@@ -799,7 +799,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
   "resolved_at": null
 }
 
-// NooyenUSATracker Alert Structure
+// ShopTracker Alert Structure
 {
   "id": 1,
   "machineId": "W1",
@@ -816,7 +816,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
             <h4 className="font-medium mt-4 mb-2">Access Log</h4>
             <div className="bg-muted p-4 rounded-md">
               <code className="block whitespace-pre text-sm">
-{`// NooyenMachineMonitor Machine Log
+{`// ShopMonitor Machine Log
 {
   "id": 1,
   "machine_id": 1,
@@ -827,7 +827,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
   "status": "completed"
 }
 
-// NooyenUSATracker Access Log
+// ShopTracker Access Log
 {
   "id": 1,
   "userId": 1,
@@ -846,12 +846,12 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
           <div>
             <h3 className="text-lg font-medium mb-2">Integration Workflow</h3>
             <p className="text-muted-foreground mb-4">
-              NooyenUSATracker and NooyenMachineMonitor communicate through standardized API endpoints. The synchronization process follows these steps:
+              ShopTracker and ShopMonitor communicate through standardized API endpoints. The synchronization process follows these steps:
             </p>
             
             <div className="space-y-6">
               <div>
-                <h4 className="text-sm font-medium mb-2">Data Synchronization (NooyenUSATracker to NooyenMachineMonitor)</h4>
+                <h4 className="text-sm font-medium mb-2">Data Synchronization (ShopTracker to ShopMonitor)</h4>
                 <div className="space-y-3 ml-2">
                   <div className="flex items-start gap-2">
                     <RefreshCcw className="h-5 w-5 text-primary mt-0.5" />
@@ -884,7 +884,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
               </div>
               
               <div>
-                <h4 className="text-sm font-medium mb-2">Data Retrieval (NooyenMachineMonitor to NooyenUSATracker)</h4>
+                <h4 className="text-sm font-medium mb-2">Data Retrieval (ShopMonitor to ShopTracker)</h4>
                 <div className="space-y-3 ml-2">
                   <div className="flex items-start gap-2">
                     <RefreshCcw className="h-5 w-5 text-primary mt-0.5" />
@@ -900,7 +900,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
                     <div>
                       <span className="font-medium">Step 5:</span> Pull pending alerts by calling <code className="bg-muted px-1 py-0.5 rounded text-sm">{`{api_base_url}/api/sync/alerts?status=pending&since={timestamp}`}</code>
                       <div className="text-sm text-muted-foreground">
-                        This endpoint retrieves any active alerts generated by NooyenMachineMonitor
+                        This endpoint retrieves any active alerts generated by ShopMonitor
                       </div>
                     </div>
                   </div>
@@ -913,7 +913,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
                   <div className="flex items-start gap-2">
                     <RefreshCcw className="h-5 w-5 text-primary mt-0.5" />
                     <div>
-                      <span className="font-medium">Authentication:</span> NooyenUSATracker calls <code className="bg-muted px-1 py-0.5 rounded text-sm">/integration/api/auth</code> on NooyenMachineMonitor
+                      <span className="font-medium">Authentication:</span> ShopTracker calls <code className="bg-muted px-1 py-0.5 rounded text-sm">/integration/api/auth</code> on ShopMonitor
                       <div className="text-sm text-muted-foreground">
                         This verifies RFID card access for specific machines
                       </div>
@@ -922,7 +922,7 @@ fetch('https://api.machinemanager.nooyen.com/api/sync/status', {
                   <div className="flex items-start gap-2">
                     <RefreshCcw className="h-5 w-5 text-primary mt-0.5" />
                     <div>
-                      <span className="font-medium">Node Status:</span> NooyenUSATracker calls <code className="bg-muted px-1 py-0.5 rounded text-sm">/integration/api/node_status</code> on NooyenMachineMonitor
+                      <span className="font-medium">Node Status:</span> ShopTracker calls <code className="bg-muted px-1 py-0.5 rounded text-sm">/integration/api/node_status</code> on ShopMonitor
                       <div className="text-sm text-muted-foreground">
                         This retrieves real-time status information about all nodes and their connected machines
                       </div>

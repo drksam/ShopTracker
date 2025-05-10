@@ -125,8 +125,9 @@ export default function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
   return (
     <>
       <div className="p-4 border-b border-neutral-800">
-        <h1 className="text-xl font-bold">NooyenUSA</h1>
+        <h1 className="text-xl font-bold">ShopTracker</h1>
         <p className="text-sm text-neutral-400">Workshop Management</p>
+        <p className="text-xs text-neutral-500">v1.0.1 | ShopSuite v1.0.1</p>
       </div>
       
       <nav className="mt-4 overflow-y-auto max-h-[calc(100vh-100px)]">

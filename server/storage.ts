@@ -203,7 +203,7 @@ export class SQLiteStorage implements IStorage {
     return user;
   }
 
-  async updateUser(id: number, userData: Partial<any>): Promise<User | undefined> {
+  async updateUser(id: number, userData: Partial<InsertUser>): Promise<User | undefined> {
     const [user] = await db.update(users).set(userData).where(eq(users.id, id)).returning();
     return user;
   }

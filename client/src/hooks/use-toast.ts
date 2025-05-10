@@ -71,6 +71,7 @@ const addToRemoveQueue = (toastId: string) => {
   toastTimeouts.set(toastId, timeout)
 }
 
+// Pure reducer without side effects
 export const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case "ADD_TOAST":
@@ -89,16 +90,6 @@ export const reducer = (state: State, action: Action): State => {
 
     case "DISMISS_TOAST": {
       const { toastId } = action
-
-      // ! Side effects ! - This could be extracted into a dismissToast() action,
-      // but I'll keep it here for simplicity
-      if (toastId) {
-        addToRemoveQueue(toastId)
-      } else {
-        state.toasts.forEach((toast) => {
-          addToRemoveQueue(toast.id)
-        })
-      }
 
       return {
         ...state,
@@ -132,6 +123,23 @@ let memoryState: State = { toasts: [] }
 
 function dispatch(action: Action) {
   memoryState = reducer(memoryState, action)
+  
+  // Handle side effects after state updates
+  if (action.type === "DISMISS_TOAST") {
+    const { toastId } = action;
+    
+    if (toastId) {
+      addToRemoveQueue(toastId);
+    } else {
+      // Queue all toasts for removal
+      memoryState.toasts.forEach((toast) => {
+        if (!toast.open) {
+          addToRemoveQueue(toast.id);
+        }
+      });
+    }
+  }
+  
   listeners.forEach((listener) => {
     listener(memoryState)
   })

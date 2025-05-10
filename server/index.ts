@@ -3,6 +3,19 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { runMigrations } from "./db-migration";
 
+// Get package version from package.json
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const packageJsonPath = join(__dirname, '..', 'package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+const appVersion = packageJson.version;
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -49,7 +62,7 @@ app.use((req, res, next) => {
 
   const server = await registerRoutes(app);
   
-  // Initialize the sync manager for data synchronization with NooyenMachineMonitor
+  // Initialize the sync manager for data synchronization with MachineMonitor
   try {
     const { syncManager } = await import('./sync');
     syncManager.initialize().catch(error => {
@@ -85,6 +98,7 @@ app.use((req, res, next) => {
     host: "0.0.0.0",
     reusePort: true,
   }, () => {
-    log(`serving on port ${port}`);
+    log(`ShopTracker v${appVersion} | Part of ShopSuite v1.0.1`);
+    log(`Server running on port ${port}`);
   });
 })();

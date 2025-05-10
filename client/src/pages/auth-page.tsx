@@ -123,7 +123,7 @@ export default function AuthPage() {
         {/* Auth Form */}
         <div className="flex flex-col justify-center">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">NooyenUSA Workshop Management</h1>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2"> Workshop Management</h1>
             <p className="text-gray-600">Manage your workshop orders efficiently</p>
           </div>
 

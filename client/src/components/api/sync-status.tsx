@@ -43,8 +43,8 @@ interface SyncStatus {
 
 interface ApiConfig {
   id: number;
-  machineMonitorApiKey: string;
-  machineMonitorApiUrl: string;
+  shopMonitorApiKey: string;
+  shopMonitorApiUrl: string;
   syncEnabled: boolean;
   syncInterval: number;
   alertsEnabled: boolean;
@@ -154,8 +154,8 @@ export function SyncStatus() {
   const handleEditClick = () => {
     if (apiConfig) {
       setFormState({
-        machineMonitorApiKey: apiConfig.machineMonitorApiKey,
-        machineMonitorApiUrl: apiConfig.machineMonitorApiUrl,
+        shopMonitorApiKey: apiConfig.shopMonitorApiKey,
+        shopMonitorApiUrl: apiConfig.shopMonitorApiUrl,
         syncEnabled: apiConfig.syncEnabled,
         syncInterval: apiConfig.syncInterval,
         alertsEnabled: apiConfig.alertsEnabled,
@@ -224,7 +224,7 @@ export function SyncStatus() {
         <div>
           <h3 className="font-medium text-lg">Synchronization Status</h3>
           <p className="text-muted-foreground text-sm">
-            Status of the synchronization between NooyenUSATracker and NooyenMachineMonitor
+            Status of the synchronization between ShopTracker and ShopMonitor
           </p>
         </div>
         <div className="flex space-x-2">
@@ -304,7 +304,7 @@ export function SyncStatus() {
               <div className="flex items-center">
                 <span className="font-medium">API Endpoint:</span>
                 <span className="ml-2 text-sm truncate max-w-xs">
-                  {apiConfig?.machineMonitorApiUrl || "Not set"}
+                  {apiConfig?.shopMonitorApiUrl || "Not set"}
                 </span>
               </div>
             </div>
@@ -312,8 +312,8 @@ export function SyncStatus() {
               <div className="flex items-center">
                 <span className="font-medium">API Key:</span>
                 <span className="ml-2">
-                  {apiConfig?.machineMonitorApiKey ? 
-                    "••••••••" + apiConfig.machineMonitorApiKey.slice(-4) : 
+                  {apiConfig?.shopMonitorApiKey ? 
+                    "••••••••" + apiConfig.shopMonitorApiKey.slice(-4) : 
                     "Not set"
                   }
                 </span>
@@ -378,23 +378,23 @@ export function SyncStatus() {
           <CardContent className="space-y-4">
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="machineMonitorApiUrl">API URL</Label>
+                <Label htmlFor="shopMonitorApiUrl">API URL</Label>
                 <Input
-                  id="machineMonitorApiUrl"
-                  name="machineMonitorApiUrl"
+                  id="shopMonitorApiUrl"
+                  name="shopMonitorApiUrl"
                   placeholder="https://api.example.com"
-                  value={formState.machineMonitorApiUrl || ""}
+                  value={formState.shopMonitorApiUrl || ""}
                   onChange={handleInputChange}
                 />
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="machineMonitorApiKey">API Key</Label>
+                <Label htmlFor="shopMonitorApiKey">API Key</Label>
                 <Input
-                  id="machineMonitorApiKey"
-                  name="machineMonitorApiKey"
+                  id="shopMonitorApiKey"
+                  name="shopMonitorApiKey"
                   placeholder="Enter API key"
-                  value={formState.machineMonitorApiKey || ""}
+                  value={formState.shopMonitorApiKey || ""}
                   onChange={handleInputChange}
                   type="password"
                 />

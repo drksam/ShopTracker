@@ -1,0 +1,17 @@
+suite structure
+ShopTracker (this app)
+ShopMonitor (Machine Monitor app)
+Database
+More to come
+
+
+this app is the primary user access point for a suite of manufacturing management apps
+there will be HTML pages provided by other apps located on other servers
+-we will need a way to navigate to them
+-this list of suite components will be dynamic and easily editable to admin users
+there will be api communication with other apps on other servers
+-we need keep this consistent across the system SEE API_DOCUMENTATION.md (this is the API info for the shop portion of this suite)
+-this app will 
+We need to ensure that our user permissions are Synchronized across the suite.
+
+

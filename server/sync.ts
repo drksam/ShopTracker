@@ -78,7 +78,7 @@ class SyncManager {
       }
 
       // Check API key and URL
-      if (!config.machineMonitorApiKey || !config.machineMonitorApiUrl) {
+      if (!config.shopMonitorApiKey || !config.shopMonitorApiUrl) {
         this.addSyncError({
           timestamp: new Date(),
           message: 'Missing API key or URL in configuration',
@@ -91,27 +91,27 @@ class SyncManager {
 
       // Push user data if enabled
       if (config.pushUserData) {
-        await this.pushUsers(config.machineMonitorApiUrl, config.machineMonitorApiKey);
+        await this.pushUsers(config.shopMonitorApiUrl, config.shopMonitorApiKey);
       }
 
       // Push location data if enabled
       if (config.pushLocationData) {
-        await this.pushLocations(config.machineMonitorApiUrl, config.machineMonitorApiKey);
+        await this.pushLocations(config.shopMonitorApiUrl, config.shopMonitorApiKey);
       }
 
       // Push machine data if enabled
       if (config.pushMachineData) {
-        await this.pushMachines(config.machineMonitorApiUrl, config.machineMonitorApiKey);
+        await this.pushMachines(config.shopMonitorApiUrl, config.shopMonitorApiKey);
       }
 
       // Pull access logs if enabled
       if (config.pullAccessLogs) {
-        await this.pullAccessLogs(config.machineMonitorApiUrl, config.machineMonitorApiKey);
+        await this.pullAccessLogs(config.shopMonitorApiUrl, config.shopMonitorApiKey);
       }
 
-      // Check for and pull alerts from NooyenMachineMonitor
+      // Check for and pull alerts from ShopMonitor
       if (config.alertsEnabled) {
-        await this.pullAlerts(config.machineMonitorApiUrl, config.machineMonitorApiKey);
+        await this.pullAlerts(config.shopMonitorApiUrl, config.shopMonitorApiKey);
       }
 
       this.lastSyncTime = new Date();
@@ -130,7 +130,7 @@ class SyncManager {
 
   async pushUsers(apiUrl: string, apiKey: string): Promise<void> {
     try {
-      log('Pushing users to NooyenMachineMonitor', 'sync');
+      log('Pushing users to ShopMonitor', 'sync');
       const users = await storage.getAllUsers();
       
       // Don't send password hashes to the external system
@@ -166,7 +166,7 @@ class SyncManager {
 
   async pushLocations(apiUrl: string, apiKey: string): Promise<void> {
     try {
-      log('Pushing locations to NooyenMachineMonitor', 'sync');
+      log('Pushing locations to ShopMonitor', 'sync');
       const locations = await storage.getAllLocations();
 
       const response = await fetch(`${apiUrl}/api/sync/locations`, {
@@ -196,7 +196,7 @@ class SyncManager {
 
   async pushMachines(apiUrl: string, apiKey: string): Promise<void> {
     try {
-      log('Pushing machines to NooyenMachineMonitor', 'sync');
+      log('Pushing machines to ShopMonitor', 'sync');
       const machines = await storage.getAllMachines();
 
       const response = await fetch(`${apiUrl}/api/sync/machines`, {
@@ -226,7 +226,7 @@ class SyncManager {
 
   async pullAccessLogs(apiUrl: string, apiKey: string): Promise<void> {
     try {
-      log('Pulling access logs from NooyenMachineMonitor', 'sync');
+      log('Pulling access logs from ShopMonitor', 'sync');
       
       // Get the timestamp of the most recent log we have
       const recentLogs = await storage.getRecentAccessLogs(1);
@@ -272,7 +272,7 @@ class SyncManager {
 
   async pullAlerts(apiUrl: string, apiKey: string): Promise<void> {
     try {
-      log('Pulling alerts from NooyenMachineMonitor', 'sync');
+      log('Pulling alerts from ShopMonitor', 'sync');
       
       const response = await fetch(`${apiUrl}/api/sync/alerts`, {
         method: 'GET',
