@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -10,9 +10,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Loader2, User, Key, Check, X, RefreshCw } from "lucide-react";
+import { Loader2, User, Key, Check, X, RefreshCw, Download } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/ui/pagination";
 
 type AccessLog = {
   id: number;
@@ -29,33 +30,175 @@ type AccessLog = {
   };
 };
 
+interface PaginatedAccessLogsResponse {
+  data: AccessLog[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
+}
+
 export default function AccessLogsPage() {
   const { user } = useAuth();
   const [filter, setFilter] = useState("");
-  const [limit, setLimit] = useState(100);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [filteredLogs, setFilteredLogs] = useState<AccessLog[]>([]);
+  const [isFiltering, setIsFiltering] = useState(false);
 
   const {
-    data: accessLogs,
+    data: paginatedLogs,
     isLoading,
     error,
     refetch,
     isRefetching,
-  } = useQuery<AccessLog[]>({
-    queryKey: ["/api/access-logs/recent", limit],
+  } = useQuery<PaginatedAccessLogsResponse>({
+    queryKey: ["/api/access-logs/recent", currentPage, pageSize],
+    queryFn: async ({ queryKey }) => {
+      const [_, page, size] = queryKey;
+      const res = await fetch(`/api/access-logs/recent?page=${page}&pageSize=${size}`);
+      if (!res.ok) throw new Error("Failed to fetch access logs");
+      return res.json();
+    },
     enabled: !!user && user.role === "admin",
   });
 
   // Filter logs based on search term
-  const filteredLogs = accessLogs?.filter(log => {
+  useState(() => {
+    if (!paginatedLogs) return;
+    
+    if (!filter) {
+      setFilteredLogs(paginatedLogs.data);
+      setIsFiltering(false);
+      return;
+    }
+
+    setIsFiltering(true);
     const searchTerm = filter.toLowerCase();
-    return (
+    const filtered = paginatedLogs.data.filter(log => 
       log.machineId.toLowerCase().includes(searchTerm) ||
       log.cardId.toLowerCase().includes(searchTerm) ||
       log.reason.toLowerCase().includes(searchTerm) ||
       (log.user?.fullName || "").toLowerCase().includes(searchTerm) ||
       (log.user?.username || "").toLowerCase().includes(searchTerm)
     );
-  });
+    
+    setFilteredLogs(filtered);
+  }, [paginatedLogs, filter]);
+
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  // Handle page size change
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setCurrentPage(1); // Reset to first page when changing page size
+  };
+
+  // Export to CSV
+  const exportToCSV = async () => {
+    try {
+      // Get total record count first
+      const countRes = await fetch(`/api/access-logs/recent?page=1&pageSize=1`);
+      if (!countRes.ok) throw new Error("Failed to fetch access logs count");
+      const countData = await countRes.json();
+      const totalRecords = countData.pagination.totalItems;
+      
+      // Define a reasonable batch size for exports
+      const BATCH_SIZE = 1000;
+      const MAX_RECORDS = 10000; // Maximum number of records to export
+      
+      // Check if the export would be too large
+      if (totalRecords > MAX_RECORDS) {
+        alert(`Export limited to ${MAX_RECORDS.toLocaleString()} records. Please refine your search criteria.`);
+      }
+      
+      // Calculate number of pages needed based on batch size
+      const totalPages = Math.ceil(Math.min(totalRecords, MAX_RECORDS) / BATCH_SIZE);
+      let allData: AccessLog[] = [];
+      
+      // Show export progress
+      const progressIndicator = document.createElement("div");
+      progressIndicator.style.position = "fixed";
+      progressIndicator.style.top = "50%";
+      progressIndicator.style.left = "50%";
+      progressIndicator.style.transform = "translate(-50%, -50%)";
+      progressIndicator.style.padding = "20px";
+      progressIndicator.style.background = "white";
+      progressIndicator.style.boxShadow = "0 4px 8px rgba(0,0,0,0.1)";
+      progressIndicator.style.borderRadius = "8px";
+      progressIndicator.style.zIndex = "9999";
+      
+      // Fetch data in batches
+      for (let page = 1; page <= totalPages; page++) {
+        // Update progress indicator
+        progressIndicator.innerHTML = `Exporting access logs: ${Math.round((page / totalPages) * 100)}%`;
+        if (page === 1) document.body.appendChild(progressIndicator);
+        
+        // Fetch this batch
+        const res = await fetch(`/api/access-logs/recent?page=${page}&pageSize=${BATCH_SIZE}`);
+        if (!res.ok) throw new Error(`Failed to fetch access logs batch ${page}`);
+        const batchData = await res.json();
+        allData = [...allData, ...batchData.data];
+      }
+      
+      // Remove progress indicator
+      document.body.removeChild(progressIndicator);
+      
+      // Apply any filters
+      if (filter) {
+        const searchTerm = filter.toLowerCase();
+        allData = allData.filter((log: AccessLog) => 
+          log.machineId.toLowerCase().includes(searchTerm) ||
+          log.cardId.toLowerCase().includes(searchTerm) ||
+          log.reason.toLowerCase().includes(searchTerm) ||
+          (log.user?.fullName || "").toLowerCase().includes(searchTerm) ||
+          (log.user?.username || "").toLowerCase().includes(searchTerm)
+        );
+      }
+      
+      if (allData.length === 0) {
+        alert("No data to export based on current filters.");
+        return;
+      }
+      
+      // Create CSV header
+      const headers = ["Timestamp", "User", "Card ID", "Machine ID", "Status", "Reason"];
+      
+      // Create CSV rows
+      const rows = allData.map((log: AccessLog) => [
+        new Date(log.timestamp).toLocaleString(),
+        log.user ? (log.user.fullName || log.user.username) : "Unknown",
+        log.cardId,
+        log.machineId,
+        log.accessGranted ? "Granted" : "Denied",
+        log.reason
+      ]);
+      
+      // Combine header and rows
+      const csvContent = [
+        headers.join(","),
+        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      ].join("\n");
+      
+      // Create blob and download
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `access-logs-${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error("Failed to export access logs:", error);
+      alert("Export failed. Please try again or export a smaller dataset.");
+    }
+  };
 
   // Loading states
   if (isLoading) {
@@ -95,16 +238,26 @@ export default function AccessLogsPage() {
             />
             <Button
               variant="outline"
+              onClick={() => exportToCSV()}
+              className="flex items-center"
+              title="Export to CSV"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export
+            </Button>
+            <Button
+              variant="outline"
               size="icon"
               onClick={() => refetch()}
               disabled={isRefetching}
+              title="Refresh"
             >
               <RefreshCw className={`w-4 h-4 ${isRefetching ? "animate-spin" : ""}`} />
             </Button>
           </div>
         </CardHeader>
         <CardContent>
-          {filteredLogs && filteredLogs.length > 0 ? (
+          {paginatedLogs && paginatedLogs.data.length > 0 ? (
             <>
               <Table>
                 <TableHeader>
@@ -118,7 +271,7 @@ export default function AccessLogsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredLogs.map((log) => (
+                  {(isFiltering ? filteredLogs : paginatedLogs.data).map((log) => (
                     <TableRow key={log.id}>
                       <TableCell>
                         {new Date(log.timestamp).toLocaleString()}
@@ -162,16 +315,6 @@ export default function AccessLogsPage() {
                   ))}
                 </TableBody>
               </Table>
-              {filteredLogs.length >= limit && (
-                <div className="flex justify-center mt-4">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setLimit(prev => prev + 100)}
-                  >
-                    Load More
-                  </Button>
-                </div>
-              )}
             </>
           ) : (
             <div className="text-center py-6 text-muted-foreground">
@@ -179,7 +322,32 @@ export default function AccessLogsPage() {
             </div>
           )}
         </CardContent>
+        {paginatedLogs && paginatedLogs.pagination.totalPages > 0 && !isFiltering && (
+          <CardFooter className="flex justify-center pt-2 border-t">
+            <Pagination
+              currentPage={paginatedLogs.pagination.page}
+              totalPages={paginatedLogs.pagination.totalPages}
+              onPageChange={handlePageChange}
+              pageSize={paginatedLogs.pagination.pageSize}
+              onPageSizeChange={handlePageSizeChange}
+              pageSizeOptions={[10, 25, 50, 100, 250]}
+              disabled={isLoading || isRefetching}
+              className="py-4"
+            />
+          </CardFooter>
+        )}
       </Card>
+      
+      {paginatedLogs && !isFiltering && (
+        <div className="flex justify-between text-sm text-gray-500 mt-2">
+          <div>
+            Showing {paginatedLogs.data.length} of {paginatedLogs.pagination.totalItems} logs
+          </div>
+          <div>
+            Page {paginatedLogs.pagination.page} of {paginatedLogs.pagination.totalPages}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

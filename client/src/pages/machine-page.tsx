@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Machine, Order, OrderLocation } from "@shared/schema";
+import { Machine, Order, OrderLocation, type MachineAssignment } from "@shared/schema";
 import {
   Card,
   CardContent,
@@ -14,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Pin, Clock, AlertTriangle, RefreshCw, UserCog } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CircularProgressbar, buildStyles } from "react-circular-progressbar";
@@ -26,6 +28,7 @@ interface MachinePageProps {
 type OrderWithLocationDetails = OrderLocation & { order: Order };
 
 export default function MachinePage({ machineId }: MachinePageProps) {
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
   const isMobile = useIsMobile();
@@ -80,6 +83,15 @@ export default function MachinePage({ machineId }: MachinePageProps) {
       return res.json();
     },
     enabled: !!machine?.locationId,
+  });
+  // Fetch assignments for this machine
+  const { data: assignments, refetch: refetchAssignments } = useQuery<(MachineAssignment & { order: Order; location: any; })[], Error>({
+    queryKey: ["/api/assignments/machine", machineId],
+    queryFn: async () => {
+      const res = await fetch(`/api/assignments/machine/${machineId}`);
+      if (!res.ok) throw new Error("Failed to fetch assignments");
+      return res.json();
+    }
   });
 
   // Check if user has permission for this machine
@@ -197,6 +209,8 @@ export default function MachinePage({ machineId }: MachinePageProps) {
       });
     },
     onSuccess: () => {
+  // Ensure notification bell updates
+  queryClient.invalidateQueries({ queryKey: ["/api/help-requests/active"] });
       toast({
         title: "Help Requested",
         description: "Your help request has been submitted",
@@ -237,6 +251,7 @@ export default function MachinePage({ machineId }: MachinePageProps) {
   };
 
   const handleFinishOrder = (orderId: number, locationId: number, totalQuantity: number) => {
+    // totalQuantity provided should already be multiplier-adjusted by caller
     finishOrderMutation.mutate({ 
       orderId, 
       locationId,
@@ -251,6 +266,7 @@ export default function MachinePage({ machineId }: MachinePageProps) {
   const handleResumeOrder = (orderId: number, locationId: number) => {
     startOrderMutation.mutate({ orderId, locationId });
   };
+  const [startSelection, setStartSelection] = useState<{ orderId: number; locationId: number } | null>(null);
 
   const handleUpdateCount = (orderId: number, locationId: number, count: number) => {
     updateQuantityMutation.mutate({ orderId, locationId, completedQuantity: count });
@@ -259,6 +275,64 @@ export default function MachinePage({ machineId }: MachinePageProps) {
   const handleRequestHelp = (orderId: number, locationId: number) => {
     helpRequestMutation.mutate({ orderId, locationId });
   };
+
+  // --- Machine Alert popups ---
+  type MachineAlert = {
+    id: number;
+    machineId: string;
+    message: string;
+    alertType: "help_request" | "notification" | "warning" | "error";
+    status: "pending" | "acknowledged" | "resolved";
+    createdAt: string | Date;
+  };
+
+  const { data: machineAlerts = [] } = useQuery<MachineAlert[]>({
+    queryKey: ["/api/alerts/machine", machine?.machineId],
+    enabled: !!machine?.machineId,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/alerts/machine/${machine!.machineId}`);
+      if (!res.ok) throw new Error("Failed to fetch machine alerts");
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const [alertQueue, setAlertQueue] = useState<MachineAlert[]>([]);
+  const [showAlertDialog, setShowAlertDialog] = useState(false);
+  const [activeAlert, setActiveAlert] = useState<MachineAlert | null>(null);
+
+  // Track seen alerts per machine in-memory to avoid repeat popups for same session
+  const [seenAlerts, setSeenAlerts] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    // On load and every poll, enqueue any pending alerts not seen or resolved
+    const pending = (machineAlerts || []).filter(a => a.status === "pending");
+    const newOnes = pending.filter(a => !seenAlerts.has(a.id));
+    if (newOnes.length > 0) {
+      setAlertQueue(prev => [...prev, ...newOnes]);
+      // Mark as seen to avoid re-opening immediately on next tick
+      setSeenAlerts(prev => new Set([...Array.from(prev), ...newOnes.map(a => a.id)]));
+    }
+  }, [machineAlerts, seenAlerts]);
+
+  useEffect(() => {
+    if (!activeAlert && alertQueue.length > 0) {
+      setActiveAlert(alertQueue[0]);
+      setAlertQueue(prev => prev.slice(1));
+      setShowAlertDialog(true);
+    }
+  }, [alertQueue, activeAlert]);
+
+  const acknowledgeAlertMutation = useMutation({
+    mutationFn: async (alertId: number) => {
+      const res = await apiRequest("POST", `/api/alerts/${alertId}/acknowledge`);
+      if (!res.ok) throw new Error("Failed to acknowledge alert");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Alert acknowledged" });
+    }
+  });
 
   // Render loading state
   if (isLoadingMachine || isLoadingLocation) {
@@ -353,7 +427,7 @@ export default function MachinePage({ machineId }: MachinePageProps) {
           >
             <RefreshCw className="h-4 w-4 mr-1" /> Refresh
           </Button>
-          {user?.role === "admin" && (
+          {user && ["admin","manager"].includes(user.role) && (
             <Button 
               onClick={() => setShowPermissionsDialog(true)}
               size="sm"
@@ -409,8 +483,17 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                 <div className="text-center">
                   <div className="w-32 h-32 mx-auto mb-2">
                     <CircularProgressbar
-                      value={(getCurrentOrders()[0].completedQuantity / getCurrentOrders()[0].order.totalQuantity) * 100}
-                      text={`${getCurrentOrders()[0].completedQuantity}/${getCurrentOrders()[0].order.totalQuantity}`}
+                      value={(() => {
+                        const ol = getCurrentOrders()[0];
+                        const total = Math.ceil((ol.order.totalQuantity || 0) * (location?.countMultiplier ?? 1));
+                        const denom = total > 0 ? total : 1;
+                        return Math.min(100, (ol.completedQuantity / denom) * 100);
+                      })()}
+                      text={(() => {
+                        const ol = getCurrentOrders()[0];
+                        const total = Math.ceil((ol.order.totalQuantity || 0) * (location?.countMultiplier ?? 1));
+                        return `${ol.completedQuantity}/${total}`;
+                      })()}
                       styles={buildStyles({
                         textSize: '16px',
                         pathColor: '#3b82f6',
@@ -420,7 +503,15 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                     />
                   </div>
                   <p className="text-sm text-gray-500 mt-1">Current Order</p>
-                  <p className="font-medium">{getCurrentOrders()[0].order.orderNumber}</p>
+                  <p className="font-medium">
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() => navigate(`/orders/${getCurrentOrders()[0].order.id}`)}
+                    >
+                      {getCurrentOrders()[0].order.orderNumber}
+                    </button>
+                  </p>
                 </div>
               ) : (
                 <div className="text-center">
@@ -475,13 +566,57 @@ export default function MachinePage({ machineId }: MachinePageProps) {
             </Card>
           ) : (
             <div className="space-y-4">
+              {/* Start from assignment */}
+              {assignments && assignments.length > 0 && (
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2">
+                      <Select value={startSelection ? `${startSelection.orderId}|${startSelection.locationId}` : ""} onValueChange={(v) => {
+                        const [oid, lid] = v.split('|').map(n => parseInt(n));
+                        setStartSelection({ orderId: oid, locationId: lid });
+                      }}>
+                        <SelectTrigger className="w-80"><SelectValue placeholder="Select assigned order to start" /></SelectTrigger>
+                        <SelectContent>
+                          {[...assignments]
+                            .sort((a, b) => {
+                              if (a.order.rush && !b.order.rush) return -1;
+                              if (!a.order.rush && b.order.rush) return 1;
+                              if (a.order.rush && b.order.rush) {
+                                const ar = a.order.rushSetAt ? new Date(a.order.rushSetAt as any).getTime() : 0;
+                                const br = b.order.rushSetAt ? new Date(b.order.rushSetAt as any).getTime() : 0;
+                                if (ar !== br) return ar - br;
+                              }
+                              return (a.order.globalQueuePosition || 0) - (b.order.globalQueuePosition || 0);
+                            })
+                            .map(a => (
+                              <SelectItem key={`${a.orderId}-${a.locationId}`} value={`${a.orderId}|${a.locationId}`}>
+                                #{a.order.orderNumber} — {a.location?.name || `Loc ${a.locationId}`} {a.order.rush && '• RUSH'}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Button disabled={!startSelection || startOrderMutation.isPending} onClick={() => startSelection && handleStartOrder(startSelection.orderId, startSelection.locationId)}>
+                        Start Order
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
               {getCurrentOrders().map((orderLocation) => (
                 <Card key={orderLocation.id} className="overflow-hidden">
                   <CardContent className="p-0">
                     <div className="p-4">
                       <div className="flex items-center justify-between mb-2">
                         <div>
-                          <h3 className="font-medium text-lg">{orderLocation.order.orderNumber}</h3>
+                          <h3 className="font-medium text-lg">
+                            <button
+                              type="button"
+                              className="text-primary hover:underline"
+                              onClick={() => navigate(`/orders/${orderLocation.order.id}`)}
+                            >
+                              {orderLocation.order.orderNumber}
+                            </button>
+                          </h3>
                           <p className="text-sm text-gray-500">{orderLocation.order.client}</p>
                         </div>
                         <div className="flex flex-col items-end">
@@ -499,12 +634,20 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                       <div className="mb-4">
                         <div className="flex justify-between items-center mb-1">
                           <span className="text-sm font-medium">Progress</span>
-                          <span className="text-sm font-medium">{orderLocation.completedQuantity}/{orderLocation.order.totalQuantity}</span>
+                          {location?.noCount ? null : (
+                            <span className="text-sm font-medium">
+                              {orderLocation.completedQuantity}/{Math.ceil((orderLocation.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
+                            </span>
+                          )}
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2.5 mb-1">
                           <div 
                             className="bg-blue-600 h-2.5 rounded-full" 
-                            style={{ width: `${(orderLocation.completedQuantity / orderLocation.order.totalQuantity) * 100}%` }}
+                            style={{ width: `${(() => {
+                              const total = Math.ceil((orderLocation.order.totalQuantity || 0) * (location?.countMultiplier ?? 1));
+                              const denom = total > 0 ? total : 1;
+                              return Math.min(100, (orderLocation.completedQuantity / denom) * 100);
+                            })()}%` }}
                           ></div>
                         </div>
                       </div>
@@ -522,7 +665,10 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                             </Button>
                             <Button 
                               size="sm"
-                              onClick={() => handleFinishOrder(orderLocation.order.id, orderLocation.locationId, orderLocation.order.totalQuantity)}
+                              onClick={() => {
+                                const total = Math.ceil((orderLocation.order.totalQuantity || 0) * (location?.countMultiplier ?? 1));
+                                handleFinishOrder(orderLocation.order.id, orderLocation.locationId, total);
+                              }}
                               disabled={finishOrderMutation.isPending}
                             >
                               Complete
@@ -554,13 +700,18 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                     <div className="border-t p-4 bg-gray-50">
                       <h4 className="text-sm font-medium mb-2">Order Details</h4>
                       
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                         <div>
                           <span className="text-gray-500">TBFOS #:</span> {orderLocation.order.tbfosNumber}
                         </div>
-                        <div>
-                          <span className="text-gray-500">Quantity:</span> {orderLocation.order.totalQuantity}
-                        </div>
+                        {!location?.noCount && (
+                          <div>
+                            <span className="text-gray-500">Quantity:</span> {Math.ceil((orderLocation.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
+                            {location?.countMultiplier && location.countMultiplier !== 1 ? (
+                              <span className="text-[10px] text-muted-foreground ml-1">({orderLocation.order.totalQuantity} x {location.countMultiplier})</span>
+                            ) : null}
+                          </div>
+                        )}
                         {orderLocation.order.description && (
                           <div className="col-span-2">
                             <span className="text-gray-500">Description:</span> {orderLocation.order.description}
@@ -593,10 +744,14 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                             size="sm" 
                             variant="outline"
                             onClick={() => {
-                              const newCount = Math.min(orderLocation.order.totalQuantity, orderLocation.completedQuantity + 1);
+                              const maxTotal = Math.ceil((orderLocation.order.totalQuantity || 0) * (location?.countMultiplier ?? 1));
+                              const newCount = Math.min(maxTotal, orderLocation.completedQuantity + 1);
                               handleUpdateCount(orderLocation.order.id, orderLocation.locationId, newCount);
                             }}
-                            disabled={updateQuantityMutation.isPending || orderLocation.completedQuantity >= orderLocation.order.totalQuantity}
+                            disabled={(() => {
+                              const maxTotal = Math.ceil((orderLocation.order.totalQuantity || 0) * (location?.countMultiplier ?? 1));
+                              return updateQuantityMutation.isPending || orderLocation.completedQuantity >= maxTotal;
+                            })()}
                           >
                             +
                           </Button>
@@ -653,7 +808,15 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                   <CardContent className="p-4">
                     <div className="flex justify-between items-center mb-2">
                       <div>
-                        <h3 className="font-medium">{orderLocation.order.orderNumber}</h3>
+                        <h3 className="font-medium">
+                          <button
+                            type="button"
+                            className="text-primary hover:underline"
+                            onClick={() => navigate(`/orders/${orderLocation.order.id}`)}
+                          >
+                            {orderLocation.order.orderNumber}
+                          </button>
+                        </h3>
                         <p className="text-sm text-gray-500">{orderLocation.order.client}</p>
                       </div>
                       <div className="text-right">
@@ -666,12 +829,16 @@ export default function MachinePage({ machineId }: MachinePageProps) {
                       </div>
                     </div>
                     
-                    <div className="text-sm mt-2">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Quantity:</span>
-                        <span>{orderLocation.completedQuantity}/{orderLocation.order.totalQuantity}</span>
+                    {!location?.noCount && (
+                      <div className="text-sm mt-2">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Quantity:</span>
+                          <span>
+                            {orderLocation.completedQuantity}/{Math.ceil((orderLocation.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}
@@ -680,6 +847,36 @@ export default function MachinePage({ machineId }: MachinePageProps) {
         </TabsContent>
       </Tabs>
       
+      {/* Incoming Alert Popup */}
+      <Dialog open={showAlertDialog} onOpenChange={(open) => {
+        setShowAlertDialog(open);
+        if (!open) {
+          setActiveAlert(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Alert</DialogTitle>
+            <DialogDescription>
+              {activeAlert ? new Date(activeAlert.createdAt).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {activeAlert && (
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">Machine: {activeAlert.machineId}</div>
+              <div className="text-base">{activeAlert.message}</div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => {
+                  if (activeAlert) acknowledgeAlertMutation.mutate(activeAlert.id);
+                  setShowAlertDialog(false);
+                }}>Acknowledge</Button>
+                <Button onClick={() => setShowAlertDialog(false)}>Close</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Permissions Dialog */}
       <Dialog open={showPermissionsDialog} onOpenChange={setShowPermissionsDialog}>
         <DialogContent>

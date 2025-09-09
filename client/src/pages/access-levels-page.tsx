@@ -46,7 +46,7 @@ import {
 const accessLevelSchema = z.object({
   userId: z.number().int().min(1, "User must be selected"),
   machineId: z.string().min(1, "Machine ID is required"),
-  accessLevel: z.enum(["user", "operator", "admin"]),
+  accessLevel: z.enum(["operator", "admin"]),
   notes: z.string().optional(),
 });
 
@@ -54,7 +54,7 @@ type AccessLevel = {
   id: number;
   userId: number;
   machineId: string;
-  accessLevel: "user" | "operator" | "admin";
+  accessLevel: "operator" | "admin";
   notes: string | null;
   createdAt: string;
   user: {
@@ -72,6 +72,10 @@ export default function AccessLevelsPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedAccessLevel, setSelectedAccessLevel] = useState<AccessLevel | null>(null);
+  const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
+  const [bulkSelectedUserId, setBulkSelectedUserId] = useState<number>(0);
+  const [bulkSelectedMachines, setBulkSelectedMachines] = useState<string[]>([]);
+  const [bulkAccessLevel, setBulkAccessLevel] = useState<"operator" | "admin">("operator");
 
   // Fetch all access levels
   const {
@@ -182,7 +186,7 @@ export default function AccessLevelsPage() {
     defaultValues: {
       userId: 0,
       machineId: "",
-      accessLevel: "user",
+  accessLevel: "operator",
       notes: "",
     },
   });
@@ -193,7 +197,7 @@ export default function AccessLevelsPage() {
     defaultValues: {
       userId: 0,
       machineId: "",
-      accessLevel: "user",
+  accessLevel: "operator",
       notes: "",
     },
   });
@@ -265,13 +269,14 @@ export default function AccessLevelsPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Access Level Management</CardTitle>
+          <div className="flex gap-2">
           <Button
             size="sm"
             onClick={() => {
               createForm.reset({
                 userId: 0,
                 machineId: "",
-                accessLevel: "user",
+                accessLevel: "operator",
                 notes: "",
               });
               setIsCreateDialogOpen(true);
@@ -279,6 +284,10 @@ export default function AccessLevelsPage() {
           >
             <Plus className="w-4 h-4 mr-2" /> Add Access Level
           </Button>
+          <Button size="sm" variant="outline" onClick={() => setIsBulkDialogOpen(true)}>
+            <Plus className="w-4 h-4 mr-2" /> Bulk Assign
+          </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {accessLevels && accessLevels.length > 0 ? (
@@ -452,7 +461,6 @@ export default function AccessLevelsPage() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="user">User</SelectItem>
                         <SelectItem value="operator">Operator</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                       </SelectContent>
@@ -599,7 +607,6 @@ export default function AccessLevelsPage() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="user">User</SelectItem>
                         <SelectItem value="operator">Operator</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                       </SelectContent>
@@ -682,6 +689,92 @@ export default function AccessLevelsPage() {
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               )}
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Assign Dialog */}
+      <Dialog open={isBulkDialogOpen} onOpenChange={setIsBulkDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Bulk Assign Machines</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>User</Label>
+              <Select onValueChange={(v) => setBulkSelectedUserId(parseInt(v))} defaultValue={bulkSelectedUserId ? String(bulkSelectedUserId) : undefined}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Select a user" /></SelectTrigger>
+                <SelectContent>
+                  {isLoadingUsers ? (
+                    <div className="p-2 text-sm">Loading…</div>
+                  ) : (
+                    users?.map(u => (
+                      <SelectItem key={u.id} value={String(u.id)}>{u.fullName || u.username}</SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>Access Level</Label>
+              <Select onValueChange={(v: "operator" | "admin") => setBulkAccessLevel(v)} defaultValue={bulkAccessLevel}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Select level" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="operator">Operator</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>Machines</Label>
+              <div className="mt-2 max-h-56 overflow-auto border rounded p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {isLoadingMachines ? (
+                  <div className="p-2 text-sm">Loading machines…</div>
+                ) : (
+                  machines?.map(m => {
+                    const checked = bulkSelectedMachines.includes(m.machineId);
+                    return (
+                      <label key={m.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setBulkSelectedMachines(prev => e.target.checked ? [...prev, m.machineId] : prev.filter(x => x !== m.machineId));
+                          }}
+                        />
+                        <span>{m.name} ({m.machineId})</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBulkDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={async () => {
+                if (!bulkSelectedUserId || bulkSelectedMachines.length === 0) {
+                  toast({ title: "Missing selection", description: "Pick a user and at least one machine.", variant: "destructive" });
+                  return;
+                }
+                try {
+                  for (const machineId of bulkSelectedMachines) {
+                    await apiRequest("POST", "/api/access-levels", { userId: bulkSelectedUserId, machineId, accessLevel: bulkAccessLevel });
+                  }
+                  setIsBulkDialogOpen(false);
+                  setBulkSelectedMachines([]);
+                  queryClient.invalidateQueries({ queryKey: ["/api/access-levels"] });
+                  toast({ title: "Assigned", description: "Access levels updated." });
+                } catch (e) {
+                  toast({ title: "Error", description: e instanceof Error ? e.message : "Failed", variant: "destructive" });
+                }
+              }}
+            >
+              Assign
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,4 @@
-import { useState, ReactNode } from "react";
+import { useState, ReactNode, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import Sidebar from "./sidebar";
@@ -6,7 +6,8 @@ import {
   Menu,
   Bell,
   ChevronDown,
-  User as UserIcon 
+  User as UserIcon,
+  ArrowLeft 
 } from "lucide-react";
 import { 
   DropdownMenu,
@@ -16,17 +17,33 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { HelpRequest } from "@shared/schema";
+import { SyncLoadingIndicator } from "@/components/api/sync-loading-indicator";
+import { useMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
+import { queryClient } from "@/lib/queryClient";
+import { AppSettings } from "@shared/schema";
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
   const { user, logoutMutation } = useAuth();
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const isMobile = useMobile();
+  const [previousPath, setPreviousPath] = useState<string | null>(null);
   
+  // Track previous path for back button functionality
+  useEffect(() => {
+    if (location !== previousPath && previousPath !== null) {
+      // Store current path as previous when navigation occurs
+      setPreviousPath(location);
+    } else if (previousPath === null) {
+      // Set initial previous path
+      setPreviousPath(location);
+    }
+  }, [location, previousPath]);
+
   // Get page title based on the current location
   const getPageTitle = () => {
     const pathSegments = location.split("/").filter(Boolean);
@@ -42,17 +59,75 @@ export default function AppShell({ children }: { children: ReactNode }) {
       "overview": "Shop Overview",
       "users": "User Management",
       "machines": "Machine Management",
+      "machine": "Machine Details",
       "audit": "Audit Trail",
-      "settings": "Settings"
+      "settings": "Settings",
+      "alerts": "Alert Center",
+      "rfid-cards": "RFID Cards",
+      "access-levels": "Access Levels",
+      "access-logs": "Access Logs",
+  // "api-config": "API Configuration" (moved to Settings)
     };
     
     return titles[firstSegment] || "Dashboard";
   };
 
-  // Get help requests
-  const { data: helpRequests } = useQuery<HelpRequest[], Error>({
+  const canGoBack = () => {
+    // Logic to determine if we can go back based on navigation paths
+    const pathSegments = location.split("/").filter(Boolean);
+    // Can go back if we're in a detail view (e.g., /orders/123)
+    return pathSegments.length > 1 || (previousPath && previousPath !== location);
+  };
+
+  const handleBackNavigation = () => {
+    const pathSegments = location.split("/").filter(Boolean);
+    
+    if (pathSegments.length > 1) {
+      // If we're in a detail view, go back to the list view
+      navigate(`/${pathSegments[0]}`);
+    } else if (previousPath && previousPath !== location) {
+      // Otherwise go back to previous path
+      navigate(previousPath);
+    } else {
+      // Default to dashboard
+      navigate('/');
+    }
+  };
+
+  // Get help requests and alerts for unified notifications (admins only for now)
+  type HelpRequestWithDetails = HelpRequest & { order: { orderNumber: string }; location: { name: string } };
+  const { data: helpRequests } = useQuery<HelpRequestWithDetails[], Error>({
     queryKey: ["/api/help-requests/active"],
-    enabled: !!user && user.role === "admin"
+    enabled: !!user && user.role === "admin",
+  });
+  type Alert = { id: number; createdAt: string | number | Date; status: string; message: string; machineId: string; alertType: string };
+  const { data: alerts } = useQuery<Alert[], Error>({
+    queryKey: ["/api/alerts"],
+    enabled: !!user && user.role === "admin",
+  });
+  
+  // Compute unseen count based on user's notificationsLastSeenAt
+  const lastSeen = user?.notificationsLastSeenAt ? new Date(user.notificationsLastSeenAt) : null;
+  const unseenHelp = (helpRequests || []).filter(hr => !lastSeen || new Date(hr.createdAt) > lastSeen);
+  const unseenAlerts = (alerts || []).filter(a => a.status === "pending" && (!lastSeen || new Date(a.createdAt) > lastSeen));
+  const unseenCount = unseenHelp.length + unseenAlerts.length;
+
+  // Branding
+  const { data: appSettings } = useQuery<AppSettings>({ queryKey: ["/api/settings"] });
+
+  // Mark notifications seen when opening the dropdown
+  const markSeen = useMutation({
+    mutationFn: async () => {
+  await fetch("/api/user/notifications/seen", { method: "POST", credentials: "include" });
+    },
+    onSuccess: () => {
+      if (user) {
+        queryClient.setQueryData(["/api/user"], {
+          ...user,
+          notificationsLastSeenAt: new Date().toISOString(),
+        });
+      }
+    }
   });
 
   const handleLogout = () => {
@@ -72,7 +147,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Desktop Sidebar */}
-      <div className="bg-neutral-900 text-white w-64 flex-shrink-0 hidden md:block">
+      <div className="bg-neutral-900 text-white w-56 flex-shrink-0 hidden md:block">
         <Sidebar />
       </div>
 
@@ -81,32 +156,59 @@ export default function AppShell({ children }: { children: ReactNode }) {
         {/* Top Navigation Bar */}
         <header className="bg-white border-b h-16 flex items-center justify-between px-4 shadow-sm">
           <div className="flex items-center">
-            {/* Mobile menu button */}
-            <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="md:hidden mr-2">
-                  <Menu className="h-5 w-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="p-0">
-                <Sidebar mobile onNavigate={() => setIsMobileSidebarOpen(false)} />
-              </SheetContent>
-            </Sheet>
+            {/* Mobile sidebar */}
+            <div className="md:hidden">
+              <Sidebar mobile />
+            </div>
             
-            <h2 className="text-lg font-medium">{getPageTitle()}</h2>
+            {/* Back button on mobile */}
+            {isMobile && canGoBack() && (
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={handleBackNavigation} 
+                className="mr-2"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+            )}
+            
+            {/* Branding on desktop */}
+            <div className="hidden md:flex items-center gap-2 ml-2 mr-4">
+              {appSettings?.companyLogoUrl && (
+                <img src={appSettings.companyLogoUrl} alt="Logo" className="h-7 w-auto" />
+              )}
+              <span className="text-sm text-gray-600">{appSettings?.companyName || 'ShopTracker'}</span>
+            </div>
+
+            <h2 className={cn(
+              "text-lg font-medium",
+              isMobile && "truncate max-w-[150px]"
+            )}>
+              {getPageTitle()}
+            </h2>
+            
+            {/* Sync indicator in header */}
+            <div className="ml-4">
+              <SyncLoadingIndicator variant="badge" />
+            </div>
           </div>
           
           <div className="flex items-center space-x-4">
-            {/* Notifications */}
+            {/* Notifications - unified with alerts */}
             {user && user.role === "admin" && (
               <div className="relative">
-                <DropdownMenu>
+                <DropdownMenu onOpenChange={(open) => {
+                  if (open) {
+                    markSeen.mutate();
+                  }
+                }}>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="relative">
                       <Bell className="h-5 w-5 text-gray-500" />
-                      {helpRequests && helpRequests.length > 0 && (
-                        <span className="absolute top-0 right-0 w-4 h-4 bg-red-500 rounded-full text-white text-xs flex items-center justify-center">
-                          {helpRequests.length}
+                      {unseenCount > 0 && (
+                        <span className="absolute top-0 right-0 min-w-4 h-4 px-1 bg-red-500 rounded-full text-white text-xs flex items-center justify-center">
+                          {unseenCount}
                         </span>
                       )}
                     </Button>
@@ -114,16 +216,23 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   <DropdownMenuContent align="end">
                     <DropdownMenuLabel>Notifications</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    
-                    {helpRequests && helpRequests.length > 0 ? (
-                      helpRequests.map((request) => (
-                        <DropdownMenuItem key={request.id} className="flex flex-col items-start">
-                          <div className="font-semibold">Help Needed: {request.order.orderNumber}</div>
-                          <div className="text-xs text-gray-500">
-                            {request.location.name} - {request.notes || "No details provided"}
-                          </div>
-                        </DropdownMenuItem>
-                      ))
+                    {((helpRequests && helpRequests.length > 0) || (alerts && alerts.length > 0)) ? (
+                      <div className="max-w-xs">
+                        {(helpRequests || []).map((request) => (
+                          <DropdownMenuItem key={`hr-${request.id}`} className="flex flex-col items-start">
+                            <div className="font-semibold">Help Needed: {request.order.orderNumber}</div>
+                            <div className="text-xs text-gray-500">
+                              {request.location.name} • {new Date(request.createdAt).toLocaleString()}
+                            </div>
+                          </DropdownMenuItem>
+                        ))}
+                        {(alerts || []).map((a) => (
+                          <DropdownMenuItem key={`al-${a.id}`} className="flex flex-col items-start">
+                            <div className="font-semibold">{a.alertType === "warning" ? "Warning" : a.alertType === "error" ? "Error" : "Notification"} on {a.machineId}</div>
+                            <div className="text-xs text-gray-500 truncate max-w-[260px]">{a.message}</div>
+                          </DropdownMenuItem>
+                        ))}
+                      </div>
                     ) : (
                       <DropdownMenuItem disabled>No notifications</DropdownMenuItem>
                     )}
@@ -174,7 +283,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto bg-gray-50 p-4">
-          {children}
+          {/* Full-width sync indicator at top of content */}
+          <div className="mb-4">
+            <SyncLoadingIndicator variant="full" />
+          </div>
+          
+          {/* Add responsive padding adjustments */}
+          <div className={cn(
+            isMobile ? "px-0" : "px-2",
+            "max-w-full"
+          )}>
+            {children}
+          </div>
         </main>
       </div>
     </div>

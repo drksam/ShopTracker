@@ -1,159 +1,179 @@
-import { sqliteTable, text, integer, real, blob } from "drizzle-orm/sqlite-core";
+import { pgSchema, pgTable, text, integer, boolean, timestamp, serial, doublePrecision } from "drizzle-orm/pg-core";
+// Use a dedicated Postgres schema to keep ShopTracker objects contained
+export const st = pgSchema('shoptracker');
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Users table
-export const users = sqliteTable("users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const users = st.table("users", {
+  id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   fullName: text("full_name").notNull(),
-  role: text("role", { enum: ["admin", "user"] }).notNull().default("user"),
-  rfidNumber: text("rfid_number"), // This will be 'rfid_number' in the database
+  role: text("role").notNull().default("shop"),
+  active: boolean("active").notNull().default(true),
+  rfidNumber: text("rfid_number"),
   email: text("email"),
   // Notification preferences
-  enableSoundNotifications: integer("enable_sound_notifications", { mode: "boolean" }).default(true),
-  enableVisualNotifications: integer("enable_visual_notifications", { mode: "boolean" }).default(true),
+  enableSoundNotifications: boolean("enable_sound_notifications").default(true),
+  enableVisualNotifications: boolean("enable_visual_notifications").default(true),
   notificationSound: text("notification_sound").default("default"),
-  orderCompletedNotifications: integer("order_completed_notifications", { mode: "boolean" }).default(true),
-  orderStartedNotifications: integer("order_started_notifications", { mode: "boolean" }).default(true),
-  helpRequestNotifications: integer("help_request_notifications", { mode: "boolean" }).default(true),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  orderCompletedNotifications: boolean("order_completed_notifications").default(true),
+  orderStartedNotifications: boolean("order_started_notifications").default(true),
+  helpRequestNotifications: boolean("help_request_notifications").default(true),
+  notificationsLastSeenAt: timestamp("notifications_last_seen_at", { withTimezone: false }),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // Locations table
-export const locations = sqliteTable("locations", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const locations = st.table("locations", {
+  id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
-  usedOrder: integer("used_order").notNull(), // Order in which location appears in workflow
-  isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
-  skipAutoQueue: integer("skip_auto_queue", { mode: "boolean" }).notNull().default(false),
-  countMultiplier: real("count_multiplier").notNull().default(1),
-  noCount: integer("no_count", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  usedOrder: integer("used_order").notNull(),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  skipAutoQueue: boolean("skip_auto_queue").notNull().default(false),
+  countMultiplier: doublePrecision("count_multiplier").notNull().default(1),
+  noCount: boolean("no_count").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // Machines table
-export const machines = sqliteTable("machines", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const machines = st.table("machines", {
+  id: serial("id").primaryKey(),
   name: text("name").notNull(),
   machineId: text("machine_id").notNull().unique(), // 2-digit ID for machine
-  locationId: integer("location_id").notNull(), // Foreign key to locations
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  locationId: integer("location_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // Machine access permissions table (relates users to machines)
-export const machinePermissions = sqliteTable("machine_permissions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const machinePermissions = st.table("machine_permissions", {
+  id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(), // Foreign key to users
   machineId: integer("machine_id").notNull(), // Foreign key to machines
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  accessRole: text("access_role").notNull().default("operator"),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
+});
+
+// Machine assignments: assign orders (at a specific location) to machines in that location
+export const machineAssignments = st.table("machine_assignments", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull(), // Foreign key to orders
+  locationId: integer("location_id").notNull(), // The location context for this assignment
+  machineId: integer("machine_id").notNull(), // Foreign key to machines
+  assignedQuantity: integer("assigned_quantity").notNull().default(0),
+  assignedAt: timestamp("assigned_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // Orders table
-export const orders = sqliteTable("orders", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const orders = st.table("orders", {
+  id: serial("id").primaryKey(),
   orderNumber: text("order_number").notNull().unique(),
   tbfosNumber: text("tbfos_number").notNull(),
   client: text("client").notNull(),
-  dueDate: integer("due_date", { mode: "timestamp" }).notNull(),
+  dueDate: timestamp("due_date", { withTimezone: false }).notNull(),
   totalQuantity: integer("total_quantity").notNull(),
   description: text("description"),
   notes: text("notes"),
-  isFinished: integer("is_finished", { mode: "boolean" }).notNull().default(false),
-  isShipped: integer("is_shipped", { mode: "boolean" }).notNull().default(false), 
-  partiallyShipped: integer("partially_shipped", { mode: "boolean" }).notNull().default(false),
+  isFinished: boolean("is_finished").notNull().default(false),
+  isShipped: boolean("is_shipped").notNull().default(false), 
+  partiallyShipped: boolean("partially_shipped").notNull().default(false),
   shippedQuantity: integer("shipped_quantity").notNull().default(0),
+  // Global queue position across all orders (1-based). Null means not in global queue yet.
+  globalQueuePosition: integer("global_queue_position"),
+  // Rush flag & timestamp for priority handling
+  rush: boolean("rush").notNull().default(false),
+  rushSetAt: timestamp("rush_set_at", { withTimezone: false }),
   pdfPrefix: text("pdf_prefix").default(""),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
   createdBy: integer("created_by"), // Foreign key to users
 });
 
 // Order locations table (tracks an order's status at each location)
-export const orderLocations = sqliteTable("order_locations", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const orderLocations = st.table("order_locations", {
+  id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull(), // Foreign key to orders
   locationId: integer("location_id").notNull(), // Foreign key to locations
-  status: text("status", { enum: ["not_started", "in_queue", "in_progress", "paused", "done"] }).notNull().default("not_started"),
+  status: text("status").notNull().default("not_started"),
   queuePosition: integer("queue_position"),
   completedQuantity: integer("completed_quantity").notNull().default(0),
   notes: text("notes"),
-  startedAt: integer("started_at", { mode: "timestamp" }),
-  completedAt: integer("completed_at", { mode: "timestamp" }),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  startedAt: timestamp("started_at", { withTimezone: false }),
+  completedAt: timestamp("completed_at", { withTimezone: false }),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // Audit trail table
-export const auditTrail = sqliteTable("audit_trail", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const auditTrail = st.table("audit_trail", {
+  id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull(), // Foreign key to orders
   userId: integer("user_id"), // Foreign key to users
   locationId: integer("location_id"), // Foreign key to locations (optional)
   action: text("action").notNull(), // e.g., "started", "updated", "finished", "shipped"
   details: text("details"),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // Help requests table
-export const helpRequests = sqliteTable("help_requests", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const helpRequests = st.table("help_requests", {
+  id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull(), // Foreign key to orders
   locationId: integer("location_id").notNull(), // Foreign key to locations
   userId: integer("user_id").notNull(), // Foreign key to users
   notes: text("notes"),
-  isResolved: integer("is_resolved", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  isResolved: boolean("is_resolved").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: false }),
 });
 
 // Email settings table
-export const emailSettings = sqliteTable("email_settings", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const emailSettings = st.table("email_settings", {
+  id: serial("id").primaryKey(),
   email: text("email").notNull(),
-  forShipping: integer("for_shipping", { mode: "boolean" }).notNull().default(true),
-  forHelp: integer("for_help", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  forShipping: boolean("for_shipping").notNull().default(true),
+  forHelp: boolean("for_help").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // PDF settings table
-export const pdfSettings = sqliteTable("pdf_settings", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const pdfSettings = st.table("pdf_settings", {
+  id: serial("id").primaryKey(),
   pdfPrefix: text("pdf_prefix").notNull().default(""),
   pdfPostfix: text("pdf_postfix").notNull().default(".pdf"),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
-// *** Laser System Authentication Tables ***
+// *** Machine Access & RFID Authentication Tables ***
 
-// RFID Cards table for laser system
-export const rfidCards = sqliteTable("rfid_cards", {
-  cardId: text("card_id").primaryKey(), // Primary key, the RFID card number
+// RFID Cards table
+export const rfidCards = st.table("rfid_cards", {
+  cardId: text("card_id").primaryKey(),
   userId: integer("user_id").notNull(), // Foreign key to users table
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
-  issueDate: integer("issue_date", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-  expiryDate: integer("expiry_date", { mode: "timestamp" }), // Optional expiry date
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  active: boolean("active").notNull().default(true),
+  issueDate: timestamp("issue_date", { withTimezone: false }).notNull().defaultNow(),
+  expiryDate: timestamp("expiry_date", { withTimezone: false }),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
-// Access Levels table for laser system
-export const accessLevels = sqliteTable("access_levels", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+// Access Levels table for machine access
+export const accessLevels = st.table("access_levels", {
+  id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(), // Foreign key to users
   machineId: text("machine_id").notNull(), // Machine identifier
-  accessLevel: text("access_level", { enum: ["operator", "admin", "maintenance"] }).notNull().default("operator"),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  accessLevel: text("access_level").notNull().default("operator"),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
-// Access Logs table for laser system
-export const accessLogs = sqliteTable("access_logs", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+// Access Logs table for machine access
+export const accessLogs = st.table("access_logs", {
+  id: serial("id").primaryKey(),
   userId: integer("user_id"), // Foreign key to users (nullable for unidentified cards)
   machineId: text("machine_id").notNull(), // Machine identifier
   cardId: text("card_id").notNull(), // RFID card ID
-  accessGranted: integer("access_granted", { mode: "boolean" }).notNull().default(false),
+  accessGranted: boolean("access_granted").notNull().default(false),
   reason: text("reason"), // Reason for access decision
-  timestamp: integer("timestamp", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  timestamp: timestamp("timestamp", { withTimezone: false }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 // Create insert schemas
@@ -164,6 +184,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
   role: true,
   rfidNumber: true,
   email: true,
+  active: true,
 });
 
 // Create notification preferences schema
@@ -194,6 +215,14 @@ export const insertMachineSchema = createInsertSchema(machines).pick({
 export const insertMachinePermissionSchema = createInsertSchema(machinePermissions).pick({
   userId: true,
   machineId: true,
+  accessRole: true,
+});
+
+export const insertMachineAssignmentSchema = createInsertSchema(machineAssignments).pick({
+  orderId: true,
+  locationId: true,
+  machineId: true,
+  assignedQuantity: true,
 });
 
 export const insertOrderSchema = createInsertSchema(orders).pick({
@@ -243,7 +272,7 @@ export const insertPdfSettingSchema = createInsertSchema(pdfSettings).pick({
   pdfPostfix: true,
 });
 
-// Laser system schema
+// Machine access schema
 export const insertRfidCardSchema = createInsertSchema(rfidCards).pick({
   cardId: true,
   userId: true,
@@ -281,6 +310,9 @@ export type InsertMachine = z.infer<typeof insertMachineSchema>;
 export type MachinePermission = typeof machinePermissions.$inferSelect;
 export type InsertMachinePermission = z.infer<typeof insertMachinePermissionSchema>;
 
+export type MachineAssignment = typeof machineAssignments.$inferSelect;
+export type InsertMachineAssignment = z.infer<typeof insertMachineAssignmentSchema>;
+
 export type Order = typeof orders.$inferSelect;
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 
@@ -299,7 +331,7 @@ export type InsertEmailSetting = z.infer<typeof insertEmailSettingSchema>;
 export type PdfSetting = typeof pdfSettings.$inferSelect;
 export type InsertPdfSetting = z.infer<typeof insertPdfSettingSchema>;
 
-// Laser system types
+// Machine access types
 export type RfidCard = typeof rfidCards.$inferSelect;
 export type InsertRfidCard = z.infer<typeof insertRfidCardSchema>;
 
@@ -309,28 +341,28 @@ export type InsertAccessLevel = z.infer<typeof insertAccessLevelSchema>;
 export type AccessLog = typeof accessLogs.$inferSelect;
 export type InsertAccessLog = z.infer<typeof insertAccessLogSchema>;
 
-// Authentication request/response types
-export const laserAuthRequestSchema = z.object({
+// Authentication request/response types (generic machine access)
+export const machineAuthRequestSchema = z.object({
   card_id: z.string(),
   machine_id: z.string()
 });
 
-export type LaserAuthRequest = z.infer<typeof laserAuthRequestSchema>;
+export type MachineAuthRequest = z.infer<typeof machineAuthRequestSchema>;
 
 // API Configuration table
-export const apiConfigs = sqliteTable("api_configs", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const apiConfigs = st.table("api_configs", {
+  id: serial("id").primaryKey(),
   shopMonitorApiKey: text("machine_monitor_api_key").notNull(),
   shopMonitorApiUrl: text("machine_monitor_api_url").notNull(),
-  syncEnabled: integer("sync_enabled", { mode: "boolean" }).notNull().default(false),
+  syncEnabled: boolean("sync_enabled").notNull().default(false),
   syncInterval: integer("sync_interval").notNull().default(60),
-  alertsEnabled: integer("alerts_enabled", { mode: "boolean" }).notNull().default(false),
-  pushUserData: integer("push_user_data", { mode: "boolean" }).notNull().default(true),
-  pushLocationData: integer("push_location_data", { mode: "boolean" }).notNull().default(true),
-  pushMachineData: integer("push_machine_data", { mode: "boolean" }).notNull().default(true),
-  pullAccessLogs: integer("pull_access_logs", { mode: "boolean" }).notNull().default(true),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  alertsEnabled: boolean("alerts_enabled").notNull().default(false),
+  pushUserData: boolean("push_user_data").notNull().default(true),
+  pushLocationData: boolean("push_location_data").notNull().default(true),
+  pushMachineData: boolean("push_machine_data").notNull().default(true),
+  pullAccessLogs: boolean("pull_access_logs").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 export const insertApiConfigSchema = createInsertSchema(apiConfigs).pick({
@@ -346,17 +378,17 @@ export const insertApiConfigSchema = createInsertSchema(apiConfigs).pick({
 });
 
 // Machine Alerts table for bidirectional communication
-export const machineAlerts = sqliteTable("machine_alerts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const machineAlerts = st.table("machine_alerts", {
+  id: serial("id").primaryKey(),
   machineId: text("machine_id").notNull(), // Machine identifier (can be from ShopMonitor)
   senderId: integer("sender_id"), // User who sent the alert (null if from machine)
   message: text("message").notNull(),
-  alertType: text("alert_type", { enum: ["help_request", "notification", "warning", "error"] }).notNull(),
-  status: text("status", { enum: ["pending", "acknowledged", "resolved"] }).notNull().default("pending"),
-  origin: text("origin", { enum: ["machine", "system"] }).notNull(), // Where the alert originated from
+  alertType: text("alert_type").notNull(),
+  status: text("status").notNull().default("pending"),
+  origin: text("origin").notNull(),
   resolvedById: integer("resolved_by_id"), // User who resolved the alert
-  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  resolvedAt: timestamp("resolved_at", { withTimezone: false }),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
 });
 
 export const insertMachineAlertSchema = createInsertSchema(machineAlerts).pick({
@@ -383,3 +415,47 @@ export type OrderWithDetails = OrderWithLocations & {
   createdByUser?: User;
   auditTrail?: AuditTrail[];
 };
+
+// Application Settings table (single-row configuration)
+export const appSettings = st.table("app_settings", {
+  id: serial("id").primaryKey(),
+  // System
+  companyName: text("company_name").notNull().default("ShopTracker Manufacturing"),
+  companyLogoUrl: text("company_logo_url").notNull().default(""),
+  timeZone: text("time_zone").notNull().default("America/New_York"),
+  dateFormat: text("date_format").notNull().default("MM/dd/yyyy"),
+  autoRefreshInterval: integer("auto_refresh_interval").notNull().default(30),
+  // Notifications
+  enableEmailNotifications: boolean("enable_email_notifications").notNull().default(false),
+  enablePushNotifications: boolean("enable_push_notifications").notNull().default(false),
+  orderCompletedNotifications: boolean("order_completed_notifications").notNull().default(true),
+  helpRequestNotifications: boolean("help_request_notifications").notNull().default(true),
+  lowStockNotifications: boolean("low_stock_notifications").notNull().default(false),
+  // Security
+  requireTwoFactor: boolean("require_two_factor").notNull().default(false),
+  sessionTimeout: integer("session_timeout").notNull().default(60),
+  passwordMinLength: integer("password_min_length").notNull().default(8),
+  requirePasswordComplexity: boolean("require_password_complexity").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: false }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: false }).notNull().defaultNow(),
+});
+
+export const insertAppSettingsSchema = createInsertSchema(appSettings).pick({
+  companyName: true,
+  companyLogoUrl: true,
+  timeZone: true,
+  dateFormat: true,
+  autoRefreshInterval: true,
+  enableEmailNotifications: true,
+  enablePushNotifications: true,
+  orderCompletedNotifications: true,
+  helpRequestNotifications: true,
+  lowStockNotifications: true,
+  requireTwoFactor: true,
+  sessionTimeout: true,
+  passwordMinLength: true,
+  requirePasswordComplexity: true,
+});
+
+export type AppSettings = typeof appSettings.$inferSelect;
+export type InsertAppSettings = z.infer<typeof insertAppSettingsSchema>;

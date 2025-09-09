@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Location, OrderWithLocations } from "@shared/schema";
 import {
@@ -40,7 +41,7 @@ export default function OverviewPage() {
   });
 
   // Fetch orders
-  const { data: orders, isLoading: isLoadingOrders } = useQuery<OrderWithLocations[], Error>({
+  const { data: ordersResponse, isLoading: isLoadingOrders } = useQuery<{data: OrderWithLocations[]}, Error>({
     queryKey: ["/api/orders", false, refreshCounter], // false = don't include shipped orders
     queryFn: async () => {
       const res = await fetch("/api/orders?includeShipped=false");
@@ -49,13 +50,24 @@ export default function OverviewPage() {
     },
   });
 
+  // Extract orders array from the response
+  const orders = ordersResponse?.data;
+
   // Fetch help requests
-  const { data: helpRequests, isLoading: isLoadingHelpRequests } = useQuery({
+  const { data: helpRequestsResponse, isLoading: isLoadingHelpRequests } = useQuery({
     queryKey: ["/api/help-requests/active", refreshCounter],
+    queryFn: async () => {
+      const res = await fetch("/api/help-requests/active");
+      if (!res.ok) throw new Error("Failed to fetch help requests");
+      return res.json();
+    },
   });
 
+  // Extract help requests from response
+  const helpRequests = Array.isArray(helpRequestsResponse) ? helpRequestsResponse : [];
+
   // Sort locations by order
-  const sortedLocations = locations
+  const sortedLocations: Location[] = Array.isArray(locations)
     ? [...locations].sort((a, b) => a.usedOrder - b.usedOrder)
     : [];
 
@@ -196,7 +208,9 @@ export default function OverviewPage() {
                         {inProgressOrders.slice(0, 3).map((order) => (
                           <TableRow key={order.id}>
                             <TableCell className="font-medium">
-                              {order.orderNumber}
+                              <Link href={`/orders/${order.id}`}>
+                                <span className="text-primary hover:underline cursor-pointer">{order.orderNumber}</span>
+                              </Link>
                               {isOrderOverdue(order) && (
                                 <AlertCircle className="inline-block ml-1 h-4 w-4 text-red-500" />
                               )}
@@ -246,7 +260,9 @@ export default function OverviewPage() {
                                 #{orderLocation?.queuePosition || "-"}
                               </TableCell>
                               <TableCell>
-                                {order.orderNumber}
+                                <Link href={`/orders/${order.id}`}>
+                                  <span className="text-primary hover:underline cursor-pointer">{order.orderNumber}</span>
+                                </Link>
                                 {isOrderOverdue(order) && (
                                   <AlertCircle className="inline-block ml-1 h-4 w-4 text-red-500" />
                                 )}

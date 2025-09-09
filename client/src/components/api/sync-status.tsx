@@ -18,6 +18,7 @@ import {
   RefreshCw,
   ServerCrash,
   Settings,
+  Loader2,
   X
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -59,15 +60,16 @@ export function SyncStatus() {
   const { toast } = useToast();
   const [editMode, setEditMode] = useState(false);
   
-  // Fetch sync status
-  const { data: syncStatus, isLoading: isLoadingSyncStatus } = useQuery<SyncStatus>({
+  // Fetch sync status with increased refresh rate during active sync
+  const { data: syncStatus, isLoading: isLoadingSyncStatus, isRefetching: isRefetchingSyncStatus } = useQuery<SyncStatus>({
     queryKey: ["/api/sync/status"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/sync/status");
       if (!res.ok) throw new Error("Failed to fetch sync status");
       return await res.json();
     },
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: (data) => data?.isSyncing ? 2000 : 30000, // Refresh every 2 seconds during sync, otherwise 30 seconds
+    refetchIntervalInBackground: true,
   });
   
   // Fetch API configuration
@@ -209,7 +211,10 @@ export function SyncStatus() {
     return new Date(datetime).toLocaleString();
   };
   
-  if (isLoadingSyncStatus || isLoadingConfig) {
+  const isSyncing = syncStatus?.isSyncing || syncNowMutation.isPending;
+  const isLoading = isLoadingSyncStatus || isLoadingConfig;
+  
+  if (isLoading) {
     return (
       <div className="p-4 text-center">
         <div className="animate-spin h-6 w-6 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
@@ -232,21 +237,50 @@ export function SyncStatus() {
             variant="outline" 
             size="sm" 
             onClick={() => testConnectionMutation.mutate()}
-            disabled={testConnectionMutation.isPending}
+            disabled={testConnectionMutation.isPending || isSyncing}
+            className="relative"
           >
-            Test Connection
+            {testConnectionMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Testing...
+              </>
+            ) : (
+              "Test Connection"
+            )}
           </Button>
           <Button 
-            variant="default" 
+            variant={isSyncing ? "outline" : "default"}
             size="sm" 
             onClick={() => syncNowMutation.mutate()}
-            disabled={syncNowMutation.isPending || !apiConfig?.syncEnabled}
+            disabled={syncNowMutation.isPending || !apiConfig?.syncEnabled || syncStatus?.isSyncing}
+            className={isSyncing ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200" : ""}
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Sync Now
+            {isSyncing ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Sync Now
+              </>
+            )}
           </Button>
         </div>
       </div>
+      
+      {/* Show a prominent loading state during sync */}
+      {isSyncing && (
+        <div className="bg-blue-50 border border-blue-200 rounded-md p-4 flex items-center shadow-sm mb-6 animate-pulse">
+          <RefreshCw className="h-5 w-5 text-blue-500 mr-3 animate-spin" />
+          <div>
+            <h3 className="text-blue-700 font-medium">Synchronization in Progress</h3>
+            <p className="text-blue-600 text-sm">Data is being synchronized between ShopTracker and ShopMonitor</p>
+          </div>
+        </div>
+      )}
       
       <Card>
         <CardHeader className="pb-2">
@@ -264,6 +298,12 @@ export function SyncStatus() {
           </div>
           <CardDescription>
             Last Synced: {formatDatetime(syncStatus?.lastSyncTime)}
+            {isRefetchingSyncStatus && !isLoading && (
+              <span className="ml-2 text-xs text-blue-500 flex items-center inline-flex">
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                Refreshing...
+              </span>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -272,7 +312,7 @@ export function SyncStatus() {
               <div className="flex items-center">
                 <span className="font-medium">Sync Status:</span>
                 <div className="ml-2 flex items-center">
-                  {syncStatus?.isSyncing ? (
+                  {isSyncing ? (
                     <>
                       <RefreshCw className="h-4 w-4 mr-1 text-blue-500 animate-spin" />
                       <span className="text-blue-500">Syncing...</span>
@@ -333,6 +373,7 @@ export function SyncStatus() {
                   variant="outline" 
                   size="sm" 
                   onClick={handleEditClick}
+                  disabled={isSyncing}
                 >
                   <Settings className="h-4 w-4 mr-2" />
                   Edit
@@ -509,7 +550,12 @@ export function SyncStatus() {
               onClick={handleSaveClick}
               disabled={updateConfigMutation.isPending}
             >
-              {updateConfigMutation.isPending ? "Saving..." : "Save Changes"}
+              {updateConfigMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : "Save Changes"}
             </Button>
           </CardFooter>
         </Card>

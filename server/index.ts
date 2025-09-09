@@ -1,7 +1,8 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { runMigrations } from "./db-migration";
+import { runMigrations, addDatabaseIndexes } from "./db-migration";
 
 // Get package version from package.json
 import { readFileSync } from 'fs';
@@ -17,8 +18,10 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 const appVersion = packageJson.version;
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// Increase body limits to support base64 image uploads (client sends ~4/3 of decoded size)
+// Allow up to ~10MB payload to cover JSON/base64 overhead while route enforces a 3MB decoded limit
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -56,8 +59,13 @@ app.use((req, res, next) => {
     log("Running database migrations...");
     await runMigrations();
     log("Database migrations completed successfully");
+    
+    // Add database indexes for performance optimization
+    log("Adding database indexes for performance optimization...");
+    await addDatabaseIndexes();
+    log("Database indexes added successfully");
   } catch (error) {
-    log(`Database migration error: ${error}`);
+    log(`Database setup error: ${error}`);
   }
 
   const server = await registerRoutes(app);
@@ -83,9 +91,13 @@ app.use((req, res, next) => {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
+  log(`Current environment: NODE_ENV=${process.env.NODE_ENV}, app.get('env')=${app.get("env")}`);
   if (app.get("env") === "development") {
+    log("Setting up Vite development server...");
     await setupVite(app, server);
+    log("Vite development server setup complete");
   } else {
+    log("Setting up static file serving for production...");
     serveStatic(app);
   }
 
@@ -93,12 +105,19 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = 5000;
+  // Binding rules:
+  // - In development: default to localhost for safety, override with HOST env if you need LAN access
+  // - In production: default to 0.0.0.0 to accept external connections, override with HOST as needed
+  const defaultDevHost = 'localhost';
+  const defaultProdHost = '0.0.0.0';
+  const isDev = app.get("env") === "development";
+  const host = process.env.HOST || (isDev ? defaultDevHost : defaultProdHost);
   server.listen({
     port,
-    host: "0.0.0.0",
-    reusePort: true,
+    host,
+    reusePort: process.platform !== 'win32', // reusePort not supported on Windows
   }, () => {
     log(`ShopTracker v${appVersion} | Part of ShopSuite v1.0.1`);
-    log(`Server running on port ${port}`);
+    log(`Server running on ${host}:${port}`);
   });
 })();

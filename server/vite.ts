@@ -23,7 +23,15 @@ export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
-    allowedHosts: true,
+    allowedHosts: true as true,
+    fs: {
+      allow: [
+        // Allow project root
+        path.resolve(import.meta.dirname, ".."),
+        // Allow shared folder (outside of Vite root which is client/)
+        path.resolve(import.meta.dirname, "..", "shared"),
+      ],
+    },
   };
 
   const vite = await createViteServer({
@@ -43,6 +51,9 @@ export async function setupVite(app: Express, server: Server) {
   app.use(vite.middlewares);
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
+
+    // Never handle API requests here; let Express routes respond
+    if (url.startsWith('/api/')) return next();
 
     try {
       const clientTemplate = path.resolve(

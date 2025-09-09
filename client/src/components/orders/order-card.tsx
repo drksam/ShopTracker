@@ -6,9 +6,19 @@ import { Button } from "@/components/ui/button";
 import { CircularProgressbar, buildStyles } from "react-circular-progressbar";
 import 'react-circular-progressbar/dist/styles.css';
 import { useQuery } from "@tanstack/react-query";
+import { useMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
+import { useLocation } from "wouter";
+
+// Support both historical and current usages of this component
+// - orderLocation: the expected prop (OrderLocation with embedded order)
+// - order: alias sometimes passed from pages, actually the same shape
+type OrderWithLocationDetails = OrderLocation & { order: Order };
 
 interface OrderCardProps {
-  orderLocation: OrderLocation & { order: Order };
+  orderLocation?: OrderWithLocationDetails;
+  // Accept both plain Order (Needed tab) and OrderWithLocationDetails (Current/Completed)
+  order?: Order | OrderWithLocationDetails;
   onClick?: () => void;
   onStart?: () => void;
   onFinish?: () => void;
@@ -17,10 +27,20 @@ interface OrderCardProps {
   onUpdateCount?: (count: number) => void;
   onRequestHelp?: (notes: string) => void;
   expanded?: boolean;
+  // Extra optional props used by location-page; safely ignored here
+  onExpand?: () => void;
+  onStatusUpdate?: (status: OrderLocation["status"]) => void;
+  isCompleted?: boolean;
+  onLocationAssign?: () => void;
+  className?: string;
+  // Quantity behavior overrides
+  hideQuantity?: boolean;
+  totalOverride?: number; // if provided, use this instead of ord.totalQuantity
 }
 
 export default function OrderCard({
   orderLocation,
+  order,
   onClick,
   onStart,
   onFinish,
@@ -28,30 +48,72 @@ export default function OrderCard({
   onResume,
   onUpdateCount,
   onRequestHelp,
-  expanded = false
+  expanded = false,
+  // accept but ignore for now to preserve compatibility
+  onExpand,
+  onStatusUpdate,
+  isCompleted,
+  onLocationAssign,
+  className,
+  hideQuantity,
+  totalOverride
 }: OrderCardProps) {
-  const { order, status, queuePosition, completedQuantity } = orderLocation;
+  const [, navigate] = useLocation();
+  const resolved = (() => {
+    if (orderLocation) return orderLocation;
+    if (order) {
+      // Distinguish between plain Order and OrderWithLocationDetails by checking for a field unique to Order
+      const maybeBase = order as Order;
+      if (typeof (maybeBase as any).orderNumber === "string") {
+        // Construct a minimal synthetic OrderLocation for display in Needed tab
+        const minimal: OrderWithLocationDetails = {
+          id: -1,
+          orderId: maybeBase.id,
+          locationId: -1,
+          status: "not_available",
+          queuePosition: null,
+          completedQuantity: 0,
+          notes: null,
+          startedAt: null,
+          completedAt: null,
+          createdAt: new Date(),
+          order: maybeBase,
+        } as unknown as OrderWithLocationDetails;
+        return minimal;
+      }
+      return order as OrderWithLocationDetails;
+    }
+    return undefined;
+  })();
+
+  if (!resolved) return null;
+  const { order: ord, status, queuePosition, completedQuantity } = resolved;
+  const isMobile = useMobile();
   
   // Add debugging to help identify status issues
-  console.log(`Order ${order.orderNumber} status:`, status);
+  if (ord) console.log(`Order ${ord.orderNumber} status:`, status);
   
   // Get PDF settings to generate PDF link
-  const { data: pdfSettings } = useQuery({
+  const { data: pdfSettings } = useQuery<{ pdfPrefix?: string; pdfPostfix?: string }>({
     queryKey: ["/api/pdf-settings"],
     enabled: expanded
   });
   
   const pdfPrefix = pdfSettings?.pdfPrefix || "";
   const pdfPostfix = pdfSettings?.pdfPostfix || ".pdf";
-  const pdfLink = `${pdfPrefix}${order.tbfosNumber}${pdfPostfix}`;
+  const pdfLink = `${pdfPrefix}${ord.tbfosNumber}${pdfPostfix}`;
   
   // Calculate progress percentage
-  const progress = order.totalQuantity > 0
-    ? Math.round((completedQuantity / order.totalQuantity) * 100)
+  const totalQty = typeof totalOverride === 'number' && totalOverride >= 0
+    ? totalOverride
+    : ord.totalQuantity;
+
+  const progress = totalQty > 0
+    ? Math.round((completedQuantity / totalQty) * 100)
     : 0;
   
   // Format due date
-  const formattedDueDate = new Date(order.dueDate).toLocaleDateString();
+  const formattedDueDate = new Date(ord.dueDate).toLocaleDateString();
   
   // Get status color for progress bar
   const getProgressColor = () => {
@@ -69,17 +131,27 @@ export default function OrderCard({
     }
   };
   
+  // Determine the card click handler: prefer provided onClick, else onExpand if available
+  const cardClick = !expanded ? (onClick ?? onExpand) : undefined;
+
   return (
-    <Card 
-      className={`relative border rounded-md mb-4 ${expanded ? 'cursor-default' : 'cursor-pointer'}`} 
-      onClick={!expanded ? onClick : undefined}
+  <Card 
+      className={cn(
+    "relative border rounded-md mb-4",
+    className,
+        expanded || !cardClick ? 'cursor-default' : 'cursor-pointer'
+      )}
+      onClick={cardClick}
     >
-      <CardContent className={`p-4 ${expanded ? 'pt-4' : 'pt-8'}`}>
+      <CardContent className={cn(
+        "p-4",
+        expanded ? 'pt-4' : 'pt-8'
+      )}>
         {!expanded && (
           <div className="absolute top-3 left-3">
             <OrderStatusIndicator 
               status={status} 
-              queuePosition={queuePosition} 
+              queuePosition={queuePosition ?? undefined} 
               showLabel={false} 
               size="md" 
             />
@@ -88,43 +160,75 @@ export default function OrderCard({
         
         <div className={expanded ? '' : 'ml-4'}>
           <div className="flex justify-between mb-2">
-            <h3 className="font-medium">{order.orderNumber} ({order.tbfosNumber})</h3>
+            <h3 className={cn(
+              "font-medium",
+              isMobile && !expanded && "text-sm truncate max-w-[180px]"
+            )}>
+              <button
+                type="button"
+                className="text-primary hover:underline"
+                onClick={(e) => { e.stopPropagation(); navigate(`/orders/${ord.id}`); }}
+              >
+                {ord.orderNumber}
+              </button>
+              {" "}({ord.tbfosNumber})
+            </h3>
+            {/* Rush badge (compact view) */}
+            {!expanded && ord.rush && (
+              <Badge variant="destructive" className="ml-2 animate-pulse">RUSH</Badge>
+            )}
             {expanded ? (
               <Badge 
                 variant={
                   status === "in_progress" ? "default" : 
                   status === "in_queue" ? "secondary" :
-                  status === "paused" ? "warning" :
-                  status === "done" ? "success" : "outline"
+                  status === "paused" ? "secondary" :
+                  status === "done" ? "secondary" : "outline"
                 }
               >
-                <OrderStatusIndicator status={status} queuePosition={queuePosition} showLabel={true} />
+                <OrderStatusIndicator status={status} queuePosition={queuePosition ?? undefined} showLabel={true} />
               </Badge>
             ) : null}
           </div>
+          {expanded && ord.rush && (
+            <div className="mb-3 -mt-1">
+              <Badge variant="destructive" className="animate-pulse">RUSH PRIORITY</Badge>
+            </div>
+          )}
           
-          <div className="text-sm mb-2">
-            <p>Client: <span className="font-medium">{order.client}</span></p>
+          <div className={cn(
+            "text-sm mb-2",
+            isMobile && !expanded && "text-xs"
+          )}>
+            <p>Client: <span className="font-medium">{ord.client}</span></p>
             <p>Due: <span className="font-medium">{formattedDueDate}</span></p>
-            <p>Quantity: <span className="font-medium">{order.totalQuantity} pcs</span></p>
+            {!hideQuantity && (
+              <p>Quantity: <span className="font-medium">{totalQty} pcs</span></p>
+            )}
           </div>
           
           {expanded && (
             <>
-              <div className="flex items-center justify-between mt-4">
+              <div className={cn(
+                "flex items-center justify-between mt-4",
+                isMobile && "flex-col items-start gap-4"
+              )}>
                 <div className="flex items-center">
-                  <div style={{ width: 60, height: 60 }}>
+                  <div style={{ width: isMobile ? 50 : 60, height: isMobile ? 50 : 60 }}>
                     <CircularProgressbar 
                       value={progress} 
                       text={`${progress}%`}
                       styles={buildStyles({
                         pathColor: getProgressColor(),
                         textColor: getProgressColor(),
-                        trailColor: '#e0e0e0'
+                        trailColor: '#e0e0e0',
+                        textSize: isMobile ? '22px' : '16px'
                       })}
                     />
                   </div>
-                  <span className="ml-2 text-sm">{completedQuantity}/{order.totalQuantity} Complete</span>
+                  {!hideQuantity && (
+                    <span className="ml-2 text-sm">{completedQuantity}/{totalQty} Complete</span>
+                  )}
                 </div>
                 
                 <div>
@@ -158,6 +262,7 @@ export default function OrderCard({
                   <Button 
                     onClick={(e) => { e.stopPropagation(); onStart && onStart(); }}
                     className="bg-blue-500 hover:bg-blue-600"
+                    size={isMobile ? "sm" : "default"}
                   >
                     <svg 
                       xmlns="http://www.w3.org/2000/svg" 
@@ -177,6 +282,7 @@ export default function OrderCard({
                   <Button 
                     onClick={(e) => { e.stopPropagation(); onPause && onPause(); }}
                     className="bg-yellow-500 hover:bg-yellow-600 text-black"
+                    size={isMobile ? "sm" : "default"}
                   >
                     <svg 
                       xmlns="http://www.w3.org/2000/svg" 
@@ -197,6 +303,7 @@ export default function OrderCard({
                   <Button 
                     onClick={(e) => { e.stopPropagation(); onResume && onResume(); }}
                     className="bg-blue-500 hover:bg-blue-600"
+                    size={isMobile ? "sm" : "default"}
                   >
                     <svg 
                       xmlns="http://www.w3.org/2000/svg" 
@@ -213,7 +320,10 @@ export default function OrderCard({
                     Resume
                   </Button>
                 ) : (
-                  <Button disabled>
+                  <Button 
+                    disabled
+                    size={isMobile ? "sm" : "default"}
+                  >
                     <svg 
                       xmlns="http://www.w3.org/2000/svg" 
                       viewBox="0 0 24 24" 
@@ -235,6 +345,7 @@ export default function OrderCard({
                   <Button 
                     onClick={(e) => { e.stopPropagation(); onFinish && onFinish(); }}
                     variant="secondary"
+                    size={isMobile ? "sm" : "default"}
                   >
                     <svg 
                       xmlns="http://www.w3.org/2000/svg" 
@@ -267,6 +378,7 @@ export default function OrderCard({
                     }}
                     variant="outline"
                     className="col-span-2 mt-2"
+                    size={isMobile ? "sm" : "default"}
                   >
                     <svg 
                       xmlns="http://www.w3.org/2000/svg" 
@@ -297,6 +409,7 @@ export default function OrderCard({
                   }}
                   variant="outline"
                   className="w-full border-red-500 text-red-500 hover:bg-red-50"
+                  size={isMobile ? "sm" : "default"}
                 >
                   <svg 
                     xmlns="http://www.w3.org/2000/svg" 

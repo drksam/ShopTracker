@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { useMobile } from "@/hooks/use-mobile";
 import {
   Plus,
   Edit,
@@ -41,6 +42,8 @@ import {
   AlertTriangle,
   Smartphone,
   QrCode,
+  MoreVertical,
+  ChevronRight,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -54,12 +57,19 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import LocationForm from "@/components/locations/location-form";
 
 export default function LocationsPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
+  const isMobile = useMobile();
   const [isLocationFormOpen, setIsLocationFormOpen] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
 
@@ -146,45 +156,47 @@ export default function LocationsPage() {
         <h1 className="text-2xl font-bold mb-4 md:mb-0">Workshop Locations</h1>
         
         {isAdmin && (
-          <Dialog 
-            open={isLocationFormOpen} 
-            onOpenChange={(open) => {
-              setIsLocationFormOpen(open);
-              if (!open) setEditingLocation(null);
-            }}
-          >
-            <DialogTrigger asChild>
-              <Button className="flex items-center">
-                <Plus className="mr-1 h-4 w-4" /> Add Location
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingLocation ? "Edit Location" : "Add New Location"}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingLocation 
-                    ? "Update the location details in the workshop management system" 
-                    : "Add a new location to the workshop management system"}
-                </DialogDescription>
-              </DialogHeader>
-              <LocationForm 
-                onSuccess={handleLocationFormSuccess} 
-                onCancel={() => {
-                  setIsLocationFormOpen(false);
-                  setEditingLocation(null);
-                }} 
-                initialData={editingLocation || undefined}
-                isEdit={!!editingLocation}
-                locationId={editingLocation?.id}
-              />
-            </DialogContent>
-          </Dialog>
+          <>
+            <Button className="flex items-center" onClick={() => setIsLocationFormOpen(true)}>
+              <Plus className="mr-1 h-4 w-4" /> {isMobile ? "Add" : "Add Location"}
+            </Button>
+            <Dialog 
+              open={isLocationFormOpen} 
+              onOpenChange={(open) => {
+                setIsLocationFormOpen(open);
+                if (!open) setEditingLocation(null);
+              }}
+            >
+              <DialogContent className="sm:max-w-md max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingLocation ? "Edit Location" : "Add New Location"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {editingLocation 
+                      ? "Update the location details in the workshop management system" 
+                      : "Add a new location to the workshop management system"}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="overflow-y-auto">
+                  <LocationForm 
+                    onSuccess={handleLocationFormSuccess} 
+                    onCancel={() => {
+                      setIsLocationFormOpen(false);
+                      setEditingLocation(null);
+                    }} 
+                    initialData={editingLocation || undefined}
+                    isEdit={!!editingLocation}
+                    locationId={editingLocation?.id}
+                  />
+                </div>
+              </DialogContent>
+            </Dialog>
+          </>
         )}
       </div>
       
-      {/* Locations Table */}
+      {/* Locations Table/Cards */}
       <Card>
         <CardHeader>
           <CardTitle>Workshop Locations</CardTitle>
@@ -210,144 +222,211 @@ export default function LocationsPage() {
               )}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-16">Order</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Attributes</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedLocations.map((location) => (
-                  <TableRow key={location.id}>
-                    <TableCell className="font-medium text-center">{location.usedOrder}</TableCell>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center">
-                        <MapPin className="h-4 w-4 mr-2 text-gray-500" />
-                        {location.name}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-2">
-                        {location.isPrimary && (
-                          <Badge variant="default">Primary</Badge>
-                        )}
-                        {location.skipAutoQueue && (
-                          <Badge variant="secondary">Skip Auto Queue</Badge>
-                        )}
-                        {location.noCount && (
-                          <Badge variant="outline">No Count</Badge>
-                        )}
-                        {location.countMultiplier !== 1 && (
-                          <Badge variant="outline">
-                            Multiplier: {location.countMultiplier}
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => navigate(`/location/${location.id}`)}
-                          title="View Location"
-                        >
-                          <LayoutDashboard className="h-4 w-4" />
-                        </Button>
-                        
-                        {/* QR Code Dialog for Mobile Access */}
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="Mobile Display QR Code"
-                            >
-                              <Smartphone className="h-4 w-4 text-blue-600" />
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Mobile Display for {location.name}</DialogTitle>
-                              <DialogDescription>
-                                Scan this QR code to access the mobile-friendly location display page.
-                                Suitable for tablets stationed at this location.
-                              </DialogDescription>
-                            </DialogHeader>
-                            <div className="flex flex-col items-center justify-center py-4">
-                              <div className="border p-4 bg-white rounded-lg">
-                                <QRCodeSVG
-                                  value={`${window.location.origin}/display/location/${location.id}`}
-                                  size={200}
-                                  level="H"
-                                  includeMargin={true}
-                                  className="mx-auto"
-                                />
-                              </div>
-                              <p className="mt-4 text-sm text-center text-gray-500">
-                                This page is designed for tablets that will be placed at this location for workers to track and update orders.
-                              </p>
-                              <Button 
-                                className="mt-4"
-                                onClick={() => window.open(`/display/location/${location.id}`, '_blank')}
-                              >
-                                Open Mobile Display
-                              </Button>
+            <>
+              {/* Mobile View - Card Layout */}
+              {isMobile && (
+                <div className="space-y-4">
+                  {sortedLocations.map((location) => (
+                    <Card key={location.id} className="overflow-hidden">
+                      <CardContent className="p-0">
+                        <div className="p-4 flex items-center justify-between">
+                          <div className="flex items-center">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center mr-3 ${
+                              location.isPrimary 
+                                ? "bg-primary text-white" 
+                                : "bg-gray-200 text-gray-700"
+                            }`}>
+                              {location.usedOrder}
                             </div>
-                          </DialogContent>
-                        </Dialog>
-                        
-                        {isAdmin && (
-                          <>
+                            <div>
+                              <div className="font-medium">{location.name}</div>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {location.isPrimary && (
+                                  <Badge variant="default" className="text-xs">Primary</Badge>
+                                )}
+                                {location.skipAutoQueue && (
+                                  <Badge variant="secondary" className="text-xs">Skip Queue</Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => navigate(`/location/${location.id}`)}>
+                                <LayoutDashboard className="h-4 w-4 mr-2" /> View Dashboard
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => window.open(`/display/location/${location.id}`, '_blank')}>
+                                <Smartphone className="h-4 w-4 mr-2" /> Mobile Display
+                              </DropdownMenuItem>
+                              {isAdmin && (
+                                <>
+                                  <DropdownMenuItem onClick={() => handleEditLocation(location)}>
+                                    <Edit className="h-4 w-4 mr-2" /> Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem 
+                                    onClick={() => handleDeleteLocation(location.id)}
+                                    className="text-red-500 focus:text-red-500"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {/* Desktop View - Table Layout */}
+              {!isMobile && (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16">Order</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Attributes</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedLocations.map((location) => (
+                      <TableRow key={location.id}>
+                        <TableCell className="font-medium text-center">{location.usedOrder}</TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center">
+                            <MapPin className="h-4 w-4 mr-2 text-gray-500" />
+                            {location.name}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-2">
+                            {location.isPrimary && (
+                              <Badge variant="default">Primary</Badge>
+                            )}
+                            {location.skipAutoQueue && (
+                              <Badge variant="secondary">Skip Auto Queue</Badge>
+                            )}
+                            {location.noCount && (
+                              <Badge variant="outline">No Count</Badge>
+                            )}
+                            {location.countMultiplier !== 1 && (
+                              <Badge variant="outline">
+                                Multiplier: {location.countMultiplier}
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex space-x-1">
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleEditLocation(location)}
-                              title="Edit Location"
+                              onClick={() => navigate(`/location/${location.id}`)}
+                              title="View Location"
                             >
-                              <Edit className="h-4 w-4" />
+                              <LayoutDashboard className="h-4 w-4" />
                             </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
+                            
+                            {/* QR Code Dialog for Mobile Access */}
+                            <Dialog>
+                              <DialogTrigger asChild>
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  title="Delete Location"
-                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                  title="Mobile Display QR Code"
                                 >
-                                  <Trash2 className="h-4 w-4" />
+                                  <Smartphone className="h-4 w-4 text-blue-600" />
                                 </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete Location</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Are you sure you want to delete the location <strong>{location.name}</strong>? 
-                                    This will remove it from all orders and can't be undone.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction 
-                                    onClick={() => handleDeleteLocation(location.id)}
-                                    className="bg-red-500 hover:bg-red-600"
+                              </DialogTrigger>
+                              <DialogContent>
+                                <DialogHeader>
+                                  <DialogTitle>Mobile Display for {location.name}</DialogTitle>
+                                  <DialogDescription>
+                                    Scan this QR code to access the mobile-friendly location display page.
+                                    Suitable for tablets stationed at this location.
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <div className="flex flex-col items-center justify-center py-4">
+                                  <div className="border p-4 bg-white rounded-lg">
+                                    <QRCodeSVG
+                                      value={`${window.location.origin}/display/location/${location.id}`}
+                                      size={200}
+                                      level="H"
+                                      includeMargin={true}
+                                      className="mx-auto"
+                                    />
+                                  </div>
+                                  <p className="mt-4 text-sm text-center text-gray-500">
+                                    This page is designed for tablets that will be placed at this location for workers to track and update orders.
+                                  </p>
+                                  <Button 
+                                    className="mt-4"
+                                    onClick={() => window.open(`/display/location/${location.id}`, '_blank')}
                                   >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                                    Open Mobile Display
+                                  </Button>
+                                </div>
+                              </DialogContent>
+                            </Dialog>
+                            
+                            {isAdmin && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditLocation(location)}
+                                  title="Edit Location"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      title="Delete Location"
+                                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete Location</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Are you sure you want to delete the location <strong>{location.name}</strong>? 
+                                        This will remove it from all orders and can't be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction 
+                                        onClick={() => handleDeleteLocation(location.id)}
+                                        className="bg-red-500 hover:bg-red-600"
+                                      >
+                                        Delete
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </>
           )}
         </CardContent>
         <CardFooter className="bg-gray-50 border-t px-6 py-4">
@@ -370,45 +449,72 @@ export default function LocationsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="relative flex items-center justify-center py-8">
-              <div className="absolute left-0 right-0 top-1/2 h-1 bg-gray-200 -z-10"></div>
-              {sortedLocations.map((location, index) => (
-                <div key={location.id} className="flex flex-col items-center mx-4">
-                  <div 
-                    className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 ${
-                      location.isPrimary 
-                        ? "bg-primary text-white" 
-                        : "bg-gray-200 text-gray-700"
-                    }`}
-                  >
-                    {location.usedOrder}
-                  </div>
-                  <div className="text-center">
-                    <p className="font-medium">{location.name}</p>
-                    {location.isPrimary && (
-                      <Badge variant="outline" className="mt-1">Primary</Badge>
+            {isMobile ? (
+              <div className="flex flex-col space-y-4 py-4">
+                {sortedLocations.map((location, index) => (
+                  <div key={location.id} className="flex items-center">
+                    <div 
+                      className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
+                        location.isPrimary 
+                          ? "bg-primary text-white" 
+                          : "bg-gray-200 text-gray-700"
+                      }`}
+                    >
+                      {location.usedOrder}
+                    </div>
+                    <div className="flex-grow">
+                      <p className="font-medium">{location.name}</p>
+                      {location.isPrimary && (
+                        <Badge variant="outline" className="mt-1">Primary</Badge>
+                      )}
+                    </div>
+                    {index < sortedLocations.length - 1 && (
+                      <ChevronRight className="text-gray-400 h-4 w-4 mx-1" />
                     )}
                   </div>
-                  {index < sortedLocations.length - 1 && (
-                    <div className="absolute" style={{ left: `${(index + 1) * (100 / sortedLocations.length)}%` }}>
-                      <svg 
-                        width="20" 
-                        height="20" 
-                        viewBox="0 0 24 24" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        strokeWidth="2" 
-                        strokeLinecap="round" 
-                        strokeLinejoin="round" 
-                        className="text-gray-400"
-                      >
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                      </svg>
+                ))}
+              </div>
+            ) : (
+              <div className="relative flex items-center justify-center py-8">
+                <div className="absolute left-0 right-0 top-1/2 h-1 bg-gray-200 -z-10"></div>
+                {sortedLocations.map((location, index) => (
+                  <div key={location.id} className="flex flex-col items-center mx-4">
+                    <div 
+                      className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 ${
+                        location.isPrimary 
+                          ? "bg-primary text-white" 
+                          : "bg-gray-200 text-gray-700"
+                      }`}
+                    >
+                      {location.usedOrder}
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                    <div className="text-center">
+                      <p className="font-medium">{location.name}</p>
+                      {location.isPrimary && (
+                        <Badge variant="outline" className="mt-1">Primary</Badge>
+                      )}
+                    </div>
+                    {index < sortedLocations.length - 1 && (
+                      <div className="absolute" style={{ left: `${(index + 1) * (100 / sortedLocations.length)}%` }}>
+                        <svg 
+                          width="20" 
+                          height="20" 
+                          viewBox="0 0 24 24" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          strokeWidth="2" 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          className="text-gray-400"
+                        >
+                          <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

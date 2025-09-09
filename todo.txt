@@ -1,13 +1,13 @@
 # ShopTracker TODO List
 
 ## Error Handling
-- Improve error handling in storage.ts methods to handle database errors consistently
+- ✅ Improve error handling in storage.ts methods to handle database errors consistently
 - Add more detailed error messages in API responses rather than generic "Failed to..." messages
-- Implement better error logging throughout the application instead of console.error
+- ✅ Implement better error logging throughout the application instead of console.error
 
 ## Sync Manager
 - Complete implementation of pullAccessLogs in sync.ts to properly handle edge cases
-- Add retry mechanisms for failed sync operations
+- ✅ Add retry mechanisms for failed sync operations
 - Implement better error recovery in sync operations
 - Add unit tests for sync functionality
 
@@ -19,14 +19,29 @@
 
 ## Performance
 - Optimize database queries in storage.ts, especially for large datasets
-- Add database indexes for frequently queried fields
-- Implement pagination for endpoints that return large datasets (audit logs, orders)
+- ✅ Add database indexes for frequently queried fields
+- ✅ Implement pagination for endpoints that return large datasets (audit logs, orders)
+- Implement query caching for frequently accessed data
 
 ## UI/UX
-- Add loading indicators during sync operations
-- Implement better error visualizations in the UI
+- ✅ Add loading indicators during sync operations
+- ✅ Implement better error visualizations in the UI
 - Add offline mode support for critical operations
-- Improve mobile responsiveness in complex views
+- Improve mobile responsiveness in complex views:
+  - Fix order detail layouts on small screens (optimize actions and tables)
+  - Enhance machine-page.tsx quantity controls for touch interfaces
+  - Optimize table views in location-display-page.tsx for smaller screens
+  - Implement responsive layout for dashboard cards and statistics
+  - Create mobile-specific layouts for order processing workflows
+  - Improve form layouts and input sizing for touch input on mobile
+  - Add swipe gestures for common actions (like completing orders)
+- Improve pagination UI components for handling large datasets:
+  - Add mobile-friendly pagination controls with larger touch targets
+  - Implement infinite scroll for long lists as an alternative to pagination
+  - Add scroll-to-top functionality for long pages
+- Add batch operations for managing multiple items at once
+- Implement dark mode theme support across the application
+- Create responsive print layouts for order and shipping documents
 
 ## Testing
 - Add unit tests for critical business logic
@@ -45,3 +60,12 @@
 - ✅ Replace any instances of "any" type with proper types in storage.ts
 - Standardize error handling patterns across the application
 - Consider extracting database operations into separate service classes
+- Consolidate duplicate responsive code patterns into shared components
+- Refactor useResponsive and useIsMobile hooks for better reusability
+
+## Data Management
+- Implement data archiving strategy for old records
+- ✅ Add limits to data export operations to prevent performance issues
+- Implement better error state recovery for interrupted workflows
+- Add bulk import/export functionality for orders and other data
+- Implement progressive loading for large datasets

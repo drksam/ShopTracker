@@ -25,6 +25,18 @@ export default defineConfig({
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
     },
   },
+  // Allow Vite dev server to serve files from the monorepo root/shared folder
+  // so imports like `@shared/logo/logoWhiteOnBlack.png` work in dev.
+  server: {
+    fs: {
+      allow: [
+        // project root
+        path.resolve(import.meta.dirname, "."),
+        // explicitly allow the shared folder outside the Vite root (client)
+        path.resolve(import.meta.dirname, "shared"),
+      ],
+    },
+  },
   root: path.resolve(import.meta.dirname, "client"),
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),

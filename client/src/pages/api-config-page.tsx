@@ -68,6 +68,7 @@ export default function ApiConfigPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  // DB diagnostics moved to Settings -> Database
 
   // Create form
   const form = useForm<ApiConfig>({
@@ -118,6 +119,8 @@ export default function ApiConfigPage() {
     
     return () => clearTimeout(timeoutId);
   }, [isLoading]);
+
+  // DB Info no longer loaded here
 
   // Update API configuration mutation
   const updateConfigMutation = useMutation({
@@ -441,6 +444,19 @@ export default function ApiConfigPage() {
             </form>
           </Form>
         </CardContent>
+      </Card>
+    </div>
+  );
+
+  const renderDatabaseTab = () => (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Database Diagnostics Moved</CardTitle>
+          <CardDescription>
+            Database connection details now live under Settings → Database. This page focuses on API config only.
+          </CardDescription>
+        </CardHeader>
       </Card>
     </div>
   );
@@ -979,6 +995,12 @@ fetch('https://api.shopmonitor.app/api/sync/status', {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">API Configuration</h1>
       </div>
+      <Alert className="mb-6">
+        <AlertTitle>Heads up</AlertTitle>
+        <AlertDescription>
+          API configuration, Sync Status, and Database diagnostics now live under Settings → API and Settings → Database. You can still review docs here.
+        </AlertDescription>
+      </Alert>
       
       <Tabs defaultValue="configuration">
         <TabsList className="mb-6">
@@ -989,6 +1011,10 @@ fetch('https://api.shopmonitor.app/api/sync/status', {
           <TabsTrigger value="sync-status">
             <Activity className="h-4 w-4 mr-2" />
             Sync Status
+          </TabsTrigger>
+          <TabsTrigger value="db">
+            <Database className="h-4 w-4 mr-2" />
+            Database
           </TabsTrigger>
           <TabsTrigger value="api-docs">
             <Code className="h-4 w-4 mr-2" />
@@ -1002,6 +1028,10 @@ fetch('https://api.shopmonitor.app/api/sync/status', {
         
         <TabsContent value="sync-status">
           {renderSyncStatus()}
+        </TabsContent>
+        
+        <TabsContent value="db">
+          {renderDatabaseTab()}
         </TabsContent>
         
         <TabsContent value="api-docs">

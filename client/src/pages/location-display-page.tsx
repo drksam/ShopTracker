@@ -228,6 +228,8 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
       });
     },
     onSuccess: () => {
+  // Ensure notification bell updates
+  queryClient.invalidateQueries({ queryKey: ["/api/help-requests/active"] });
       toast({
         title: "Help Requested",
         description: "Your help request has been submitted",
@@ -286,6 +288,71 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
     helpRequestMutation.mutate({ orderId });
   };
 
+  // --- Location Alert popups ---
+  type MachineAlert = {
+    id: number;
+    machineId: string;
+    message: string;
+    alertType: "help_request" | "notification" | "warning" | "error";
+    status: "pending" | "acknowledged" | "resolved";
+    createdAt: string | Date;
+  };
+
+  const { data: allPendingAlerts = [] } = useQuery<MachineAlert[]>({
+    queryKey: ["/api/alerts", "location-display", locationId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/alerts");
+      if (!res.ok) throw new Error("Failed to fetch alerts");
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  // Machines at this location (for filtering alerts)
+  const { data: machines } = useQuery<any[]>({
+    queryKey: ["/api/machines/location", locationId],
+    queryFn: async () => {
+      const res = await fetch(`/api/machines/location/${locationId}`);
+      if (!res.ok) throw new Error("Failed to fetch machines for this location");
+      return res.json();
+    },
+  });
+
+  const [alertQueue, setAlertQueue] = useState<MachineAlert[]>([]);
+  const [showAlertDialog, setShowAlertDialog] = useState(false);
+  const [activeAlert, setActiveAlert] = useState<MachineAlert | null>(null);
+  const [seenAlerts, setSeenAlerts] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (!machines || machines.length === 0) return;
+    const machineIdSet = new Set(machines.map((m: any) => m.machineId));
+    const relevant = (allPendingAlerts || []).filter(a => a.status === "pending" && machineIdSet.has(a.machineId));
+    const newOnes = relevant.filter(a => !seenAlerts.has(a.id));
+    if (newOnes.length > 0) {
+      setAlertQueue(prev => [...prev, ...newOnes]);
+      setSeenAlerts(prev => new Set([...Array.from(prev), ...newOnes.map(a => a.id)]));
+    }
+  }, [allPendingAlerts, machines, seenAlerts]);
+
+  useEffect(() => {
+    if (!activeAlert && alertQueue.length > 0) {
+      setActiveAlert(alertQueue[0]);
+      setAlertQueue(prev => prev.slice(1));
+      setShowAlertDialog(true);
+    }
+  }, [alertQueue, activeAlert]);
+
+  const acknowledgeAlertMutation = useMutation({
+    mutationFn: async (alertId: number) => {
+      const res = await apiRequest("POST", `/api/alerts/${alertId}/acknowledge`);
+      if (!res.ok) throw new Error("Failed to acknowledge alert");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Alert acknowledged" });
+    }
+  });
+
   // Render loading state
   if (isLoadingLocation || isLoadingOrders) {
     return (
@@ -337,9 +404,9 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
   }
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="space-y-6 max-w-4xl mx-auto px-4">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      <div className={`${isMobile ? 'flex flex-col space-y-3' : 'flex justify-between'} items-center mb-6`}>
         <div className="flex items-center">
           <Button 
             variant="ghost" 
@@ -357,13 +424,13 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
             variant="outline" 
             onClick={() => refetch()}
             className="mr-2"
-            size="sm"
+            size={isMobile ? "sm" : "default"}
           >
             <RefreshCw className="h-4 w-4 mr-1" /> Refresh
           </Button>
           <Button 
             onClick={() => setShowQueueDialog(true)}
-            size="sm"
+            size={isMobile ? "sm" : "default"}
           >
             View Queue
           </Button>
@@ -399,10 +466,10 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
             </div>
             
             {/* Current Order Progress */}
-            <div className="flex-1 flex flex-col items-center justify-center">
+            <div className="flex-1 flex flex-col items-center justify-center mt-4 md:mt-0">
               {getCurrentOrders().length > 0 ? (
                 <div className="text-center">
-                  <div className="w-32 h-32 mx-auto mb-2">
+                  <div className={`${isMobile ? 'w-24 h-24' : 'w-32 h-32'} mx-auto mb-2`}>
                     <CircularProgressbar
                       value={(getCurrentOrders()[0].completedQuantity / getCurrentOrders()[0].order.totalQuantity) * 100}
                       text={`${getCurrentOrders()[0].completedQuantity}/${getCurrentOrders()[0].order.totalQuantity}`}
@@ -421,8 +488,8 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                 </div>
               ) : (
                 <div className="text-center">
-                  <div className="w-32 h-32 mx-auto mb-2 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center">
-                    <Clock className="h-12 w-12 text-gray-300" />
+                  <div className={`${isMobile ? 'w-24 h-24' : 'w-32 h-32'} mx-auto mb-2 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center`}>
+                    <Clock className={`${isMobile ? 'h-10 w-10' : 'h-12 w-12'} text-gray-300`} />
                   </div>
                   <p className="text-sm text-gray-500 mt-2">No Active Orders</p>
                   <p className="text-xs text-gray-400">Station is available</p>
@@ -435,16 +502,16 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
       
       {/* Orders Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="current">
-            Current Orders {getCurrentOrders().length > 0 && `(${getCurrentOrders().length})`}
+        <TabsList className={`mb-4 ${isMobile ? 'w-full' : ''}`}>
+          <TabsTrigger value="current" className={isMobile ? 'flex-1' : ''}>
+            {isMobile ? 'Current' : 'Current Orders'} {getCurrentOrders().length > 0 && `(${getCurrentOrders().length})`}
           </TabsTrigger>
-          <TabsTrigger value="completed">
-            Completed {getCompletedOrders().length > 0 && `(${getCompletedOrders().length})`}
+          <TabsTrigger value="completed" className={isMobile ? 'flex-1' : ''}>
+            {isMobile ? 'Done' : 'Completed'} {getCompletedOrders().length > 0 && `(${getCompletedOrders().length})`}
           </TabsTrigger>
           {location.isPrimary && (
-            <TabsTrigger value="needed_v2">
-              Needed Orders {neededOrders?.length > 0 && `(${neededOrders.length})`}
+            <TabsTrigger value="needed_v2" className={isMobile ? 'flex-1' : ''}>
+              {isMobile ? 'Needed' : 'Needed Orders'} {neededOrders?.length > 0 && `(${neededOrders.length})`}
             </TabsTrigger>
           )}
         </TabsList>
@@ -487,20 +554,20 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                 <Card key={orderLocation.id} className="overflow-hidden">
                   <CardContent className="p-0">
                     <div className="p-4">
-                      <div className="flex items-center justify-between mb-2">
+                      <div className={`${isMobile ? 'flex flex-col gap-2' : 'flex items-center justify-between'} mb-2`}>
                         <div>
                           <Link to={`/orders/${orderLocation.order.id}`}>
                             <h3 className="font-medium text-lg text-primary hover:underline cursor-pointer">{orderLocation.order.orderNumber}</h3>
                           </Link>
                           <p className="text-sm text-gray-500">{orderLocation.order.client}</p>
                         </div>
-                        <div className="flex flex-col items-end">
+                        <div className={`${isMobile ? '' : 'flex flex-col items-end'}`}>
                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                             orderLocation.status === "in_progress" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
                           }`}>
                             {orderLocation.status === "in_progress" ? "In Progress" : "Paused"}
                           </span>
-                          <span className="text-xs text-gray-500 mt-1">
+                          <span className="text-xs text-gray-500 mt-1 ml-2">
                             Due: {new Date(orderLocation.order.dueDate).toLocaleDateString()}
                           </span>
                         </div>
@@ -519,7 +586,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                         </div>
                       </div>
                       
-                      <div className="flex flex-wrap gap-2">
+                      <div className={`${isMobile ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap gap-2'}`}>
                         {orderLocation.status === "in_progress" ? (
                           <>
                             <Button 
@@ -527,6 +594,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                               variant="outline"
                               onClick={() => handlePauseOrder(orderLocation.order.id)}
                               disabled={pauseOrderMutation.isPending}
+                              className={isMobile ? 'w-full' : ''}
                             >
                               Pause
                             </Button>
@@ -534,6 +602,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                               size="sm"
                               onClick={() => handleFinishOrder(orderLocation.order.id)}
                               disabled={finishOrderMutation.isPending}
+                              className={isMobile ? 'w-full' : ''}
                             >
                               Complete
                             </Button>
@@ -543,6 +612,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                             size="sm"
                             onClick={() => handleResumeOrder(orderLocation.order.id)}
                             disabled={startOrderMutation.isPending}
+                            className={isMobile ? 'col-span-2 w-full' : ''}
                           >
                             Resume
                           </Button>
@@ -551,7 +621,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                         <Button 
                           size="sm" 
                           variant="outline"
-                          className="ml-auto"
+                          className={isMobile ? 'col-span-2 w-full mt-1' : 'ml-auto'}
                           onClick={() => handleRequestHelp(orderLocation.order.id)}
                           disabled={helpRequestMutation.isPending}
                         >
@@ -565,10 +635,10 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                       <h4 className="text-sm font-medium mb-2">Order Details</h4>
                       
                       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                        <div>
+                        <div className={isMobile ? 'col-span-2' : ''}>
                           <span className="text-gray-500">TBFOS #:</span> {orderLocation.order.tbfosNumber}
                         </div>
-                        <div>
+                        <div className={isMobile ? 'col-span-2' : ''}>
                           <span className="text-gray-500">Quantity:</span> {orderLocation.order.totalQuantity}
                         </div>
                         {orderLocation.order.description && (
@@ -586,7 +656,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                       {/* Update quantity controls */}
                       <div className="mt-4">
                         <h4 className="text-sm font-medium mb-2">Update Completed Quantity</h4>
-                        <div className="flex items-center gap-2">
+                        <div className={`${isMobile ? 'flex flex-wrap' : 'flex items-center'} gap-2`}>
                           <Button 
                             size="sm" 
                             variant="outline"
@@ -611,12 +681,13 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                             +
                           </Button>
                           
-                          <div className="ml-auto">
+                          <div className={isMobile ? 'w-full mt-2' : 'ml-auto'}>
                             <Button 
                               size="sm"
                               variant="default"
                               onClick={() => handleUpdateCount(orderLocation.order.id, orderLocation.completedQuantity)}
                               disabled={updateQuantityMutation.isPending}
+                              className={isMobile ? 'w-full' : ''}
                             >
                               Update
                             </Button>
@@ -647,7 +718,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                     className="border rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow"
                   >
                     <div className="p-4 border-b bg-gray-50">
-                      <div className="flex justify-between items-center">
+                      <div className={`${isMobile ? 'flex flex-col space-y-2' : 'flex justify-between'} items-center`}>
                         <div>
                           <div className="flex items-center">
                             <a 
@@ -665,7 +736,7 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                           </div>
                         </div>
                         
-                        <div className="flex flex-col items-end">
+                        <div className={isMobile ? '' : 'flex flex-col items-end'}>
                           <span className="bg-blue-100 text-blue-800 inline-flex items-center text-xs px-2.5 py-0.5 rounded-full font-medium">
                             Needs processing
                           </span>
@@ -688,72 +759,29 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
                       </div>
                     </div>
 
-                    <div className="p-3 flex space-x-2 justify-end bg-white">
+                    <div className="p-3 flex justify-end bg-white">
                       <Button
                         onClick={() => startOrderMutation.mutate(order.id)}
                         className="bg-blue-600 hover:bg-blue-700"
                         size="sm"
+                        fullWidth={isMobile}
                       >
                         <Clock className="mr-1.5 h-4 w-4" /> 
                         Start Now
-                      </Button>
-                        
-                      <Button
-                        onClick={() => {
-                          toast({
-                            title: "Adding to queue...",
-                            description: "Please wait"
-                          });
-                          
-                          apiRequest("POST", `/api/queue/location/${locationId}`, {
-                            orderId: order.id
-                          })
-                          .then(() => {
-                            toast({
-                              title: "Success",
-                              description: "Order added to queue"
-                            });
-                            refetchQueue();
-                            refetchNeededOrders();
-                          })
-                          .catch(error => {
-                            toast({
-                              title: "Error",
-                              description: "Failed to add order to queue",
-                              variant: "destructive"
-                            });
-                          });
-                        }}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <Plus className="mr-1.5 h-4 w-4" />
-                        Add to Queue
                       </Button>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
+              // No needed orders state
               <Card>
                 <CardContent className="pt-6">
                   <div className="flex flex-col items-center justify-center text-neutral-500 py-8">
-                    <svg 
-                      xmlns="http://www.w3.org/2000/svg" 
-                      viewBox="0 0 24 24" 
-                      fill="none" 
-                      stroke="currentColor" 
-                      strokeWidth="2" 
-                      strokeLinecap="round" 
-                      strokeLinejoin="round" 
-                      className="h-12 w-12 mb-2 text-gray-400"
-                    >
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <polyline points="12 6 12 12 16 14"></polyline>
-                    </svg>
+                    <AlertCircle className="h-12 w-12 mb-2 text-gray-400" />
                     <h3 className="text-lg font-medium mb-1">No Orders Needed</h3>
                     <p className="text-sm text-center">
-                      No orders currently need processing at this primary location
+                      There are no orders that need processing at this primary location
                     </p>
                   </div>
                 </CardContent>
@@ -767,57 +795,46 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
             <Card>
               <CardContent className="pt-6">
                 <div className="flex flex-col items-center justify-center text-neutral-500 py-8">
-                  <svg 
-                    xmlns="http://www.w3.org/2000/svg" 
-                    viewBox="0 0 24 24" 
-                    fill="none" 
-                    stroke="currentColor" 
-                    strokeWidth="2" 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    className="h-12 w-12 mb-2 text-gray-400"
-                  >
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                  </svg>
+                  <AlertCircle className="h-12 w-12 mb-2 text-gray-400" />
                   <h3 className="text-lg font-medium mb-1">No Completed Orders</h3>
                   <p className="text-sm text-center">
-                    No completed orders at this location yet
+                    No orders have been completed at this location yet
                   </p>
                 </div>
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-4">
-              {getCompletedOrders().map((orderLocation) => (
-                <Card key={orderLocation.id}>
-                  <CardContent className="p-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <div>
-                        <Link to={`/orders/${orderLocation.order.id}`}>
-                          <h3 className="font-medium text-primary hover:underline cursor-pointer">{orderLocation.order.orderNumber}</h3>
-                        </Link>
-                        <p className="text-sm text-gray-500">{orderLocation.order.client}</p>
-                      </div>
-                      <div className="text-right">
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          Completed
-                        </span>
-                        <div className="text-xs text-gray-500 mt-1">
-                          {new Date(orderLocation.completedAt || "").toLocaleDateString()}
-                        </div>
-                      </div>
+            <div className="space-y-2">
+              {getCompletedOrders().slice(0, 10).map((orderLocation) => (
+                <Card key={orderLocation.id} className="overflow-hidden">
+                  <CardContent className={`p-4 ${isMobile ? 'flex flex-col space-y-2' : 'flex items-center justify-between'}`}>
+                    <div>
+                      <Link to={`/orders/${orderLocation.order.id}`}>
+                        <h3 className="font-medium text-primary hover:underline cursor-pointer">
+                          {orderLocation.order.orderNumber}
+                        </h3>
+                      </Link>
+                      <p className="text-sm text-gray-500">{orderLocation.order.client}</p>
                     </div>
-                    
-                    <div className="text-sm mt-2">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Quantity:</span>
-                        <span>{orderLocation.completedQuantity}/{orderLocation.order.totalQuantity}</span>
-                      </div>
+                    <div className={isMobile ? '' : 'text-right'}>
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 mb-1">
+                        Completed
+                      </span>
+                      <p className="text-sm text-gray-700">
+                        Qty: {orderLocation.completedQuantity} / {orderLocation.order.totalQuantity}
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
               ))}
+              
+              {getCompletedOrders().length > 10 && (
+                <div className="text-center pt-4">
+                  <Button variant="outline" size="sm">
+                    View All Completed Orders
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </TabsContent>
@@ -825,58 +842,100 @@ export default function LocationDisplayPage({ locationId }: LocationDisplayPageP
       
       {/* Queue Dialog */}
       <Dialog open={showQueueDialog} onOpenChange={setShowQueueDialog}>
-        <DialogContent>
+        <DialogContent className={`sm:max-w-md ${isMobile ? 'w-[calc(100vw-32px)] max-h-[80vh] overflow-y-auto' : ''}`}>
           <DialogHeader>
-            <DialogTitle>Queue for {location.name}</DialogTitle>
+            <DialogTitle>Orders Queue</DialogTitle>
             <DialogDescription>
-              Orders in queue for this location
+              Orders waiting to be processed at this location
             </DialogDescription>
           </DialogHeader>
           
-          {isLoadingQueue ? (
-            <div className="py-4">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full mb-2" />
-              ))}
-            </div>
-          ) : queueItems && queueItems.length > 0 ? (
-            <div className="max-h-[60vh] overflow-y-auto">
-              {queueItems.map((item) => (
-                <div 
-                  key={item.id} 
-                  className="flex justify-between items-center py-2 border-b last:border-0"
-                >
-                  <div>
-                    <div className="font-medium">
-                      <span className="text-sm">Queue #{item.queuePosition}:</span>{" "}
-                      <Link to={`/orders/${item.order.id}`}>
-                        <span className="text-primary hover:underline cursor-pointer">{item.order.orderNumber}</span>
-                      </Link>
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {item.order.client} • {item.order.totalQuantity} units
-                    </div>
-                  </div>
-                  <Button
-                    onClick={() => {
-                      handleStartOrder(item.order.id);
-                      setShowQueueDialog(false);
-                    }}
-                    disabled={startOrderMutation.isPending}
-                    size="sm"
+          <div className="py-4">
+            {isLoadingQueue ? (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-12 w-full" />
+                ))}
+              </div>
+            ) : queueItems && queueItems.length > 0 ? (
+              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                {queueItems.map((item) => (
+                  <div 
+                    key={item.id}
+                    className="border rounded p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2"
                   >
-                    Start
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8">
-              <AlertCircle className="h-12 w-12 text-gray-400 mb-2" />
-              <h3 className="text-lg font-medium mb-1">Queue Empty</h3>
-              <p className="text-sm text-center text-gray-500">
-                There are no orders in the queue for this location
-              </p>
+                    <div>
+                      <div className="font-medium">
+                        <Link to={`/orders/${item.order.id}`}>
+                          <span className="text-blue-600 hover:underline">
+                            {item.order.orderNumber}
+                          </span>
+                        </Link>
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {item.order.client} - {item.order.totalQuantity} units
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Due: {new Date(item.order.dueDate).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      className={isMobile ? 'w-full' : ''}
+                      onClick={() => {
+                        handleStartOrder(item.order.id);
+                        setShowQueueDialog(false);
+                      }}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Start
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-gray-500">
+                <p>No orders in queue for this location</p>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex justify-end mt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowQueueDialog(false)}
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Incoming Alert Popup */}
+      <Dialog open={showAlertDialog} onOpenChange={(open) => {
+        setShowAlertDialog(open);
+        if (!open) {
+          setActiveAlert(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Alert</DialogTitle>
+            <DialogDescription>
+              {activeAlert ? new Date(activeAlert.createdAt).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {activeAlert && (
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">Machine: {activeAlert.machineId}</div>
+              <div className="text-base">{activeAlert.message}</div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => {
+                  if (activeAlert) acknowledgeAlertMutation.mutate(activeAlert.id);
+                  setShowAlertDialog(false);
+                }}>Acknowledge</Button>
+                <Button onClick={() => setShowAlertDialog(false)}>Close</Button>
+              </div>
             </div>
           )}
         </DialogContent>

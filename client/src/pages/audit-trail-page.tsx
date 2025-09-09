@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,42 +33,95 @@ import {
   Download,
   RefreshCw,
   HelpCircle,
-  Plus
+  Plus,
+  Loader2
 } from "lucide-react";
+import { Pagination } from "@/components/ui/pagination";
+
+interface AuditRecord {
+  id: number;
+  orderId: number;
+  userId: number;
+  action: string;
+  details: string;
+  locationId: number | null;
+  createdAt: number;
+  order: {
+    id: number;
+    orderNumber: string;
+    tbfosNumber: string;
+    client: string;
+  } | null;
+  user: {
+    id: number;
+    username: string;
+    fullName: string;
+  } | null;
+  location: {
+    id: number;
+    name: string;
+  } | null;
+}
+
+interface PaginatedAuditResponse {
+  data: AuditRecord[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
+}
 
 export default function AuditTrailPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [actionFilter, setActionFilter] = useState<string | "all">("all");
-  const [limit, setLimit] = useState(100);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [refreshCounter, setRefreshCounter] = useState(0);
+  const [isFiltering, setIsFiltering] = useState(false);
+  const [filteredAuditTrail, setFilteredAuditTrail] = useState<AuditRecord[]>([]);
 
-  // Fetch audit trail
-  const { data: auditTrail, isLoading } = useQuery({
-    queryKey: ["/api/audit-trail", limit, refreshCounter],
-    queryFn: async () => {
-      const res = await fetch(`/api/audit-trail?limit=${limit}`);
+  // Fetch audit trail with pagination
+  const { data: paginatedAudit, isLoading, refetch } = useQuery<PaginatedAuditResponse>({
+    queryKey: ["/api/audit-trail", currentPage, pageSize, refreshCounter],
+    queryFn: async ({ queryKey }) => {
+      const [_, page, size] = queryKey;
+      const res = await fetch(`/api/audit-trail?page=${page}&pageSize=${size}`);
       if (!res.ok) throw new Error("Failed to fetch audit trail");
       return res.json();
     },
   });
 
-  // Filter audit trail by search query and action type
-  const filteredAuditTrail = auditTrail
-    ? auditTrail.filter((audit: any) => {
-        const matchesSearch = !searchQuery || 
-          (audit.order?.orderNumber && audit.order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          (audit.order?.tbfosNumber && audit.order.tbfosNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          (audit.order?.client && audit.order.client.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          (audit.user?.username && audit.user.username.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          (audit.user?.fullName && audit.user.fullName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          (audit.location?.name && audit.location.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          (audit.details && audit.details.toLowerCase().includes(searchQuery.toLowerCase()));
-          
-        const matchesAction = actionFilter === "all" || audit.action === actionFilter;
+  // Filter audit trail client-side when search query or action filter changes
+  // Note: In a production app with large datasets, you might want to implement server-side filtering
+  useState(() => {
+    if (!paginatedAudit) return;
+
+    if (!searchQuery && actionFilter === "all") {
+      setFilteredAuditTrail(paginatedAudit.data);
+      setIsFiltering(false);
+      return;
+    }
+
+    setIsFiltering(true);
+    const filtered = paginatedAudit.data.filter(audit => {
+      const matchesSearch = !searchQuery || 
+        (audit.order?.orderNumber && audit.order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (audit.order?.tbfosNumber && audit.order.tbfosNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (audit.order?.client && audit.order.client.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (audit.user?.username && audit.user.username.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (audit.user?.fullName && audit.user.fullName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (audit.location?.name && audit.location.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (audit.details && audit.details.toLowerCase().includes(searchQuery.toLowerCase()));
         
-        return matchesSearch && matchesAction;
-      })
-    : [];
+      const matchesAction = actionFilter === "all" || audit.action === actionFilter;
+      
+      return matchesSearch && matchesAction;
+    });
+    
+    setFilteredAuditTrail(filtered);
+  }, [paginatedAudit, searchQuery, actionFilter]);
 
   // Format date
   const formatDate = (timestamp: number) => {
@@ -146,38 +200,145 @@ export default function AuditTrailPage() {
     }
   };
 
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  // Handle page size change
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setCurrentPage(1); // Reset to first page when changing page size
+  };
+
   // Export to CSV
-  const exportToCSV = () => {
-    if (!auditTrail || auditTrail.length === 0) return;
-    
-    // Create CSV header
-    const headers = ["Timestamp", "Order #", "Action", "User", "Location", "Details"];
-    
-    // Create CSV rows
-    const rows = auditTrail.map((audit: any) => [
-      formatDate(audit.createdAt),
-      audit.order?.orderNumber || "",
-      getActionLabel(audit.action),
-      audit.user?.fullName || audit.user?.username || "",
-      audit.location?.name || "",
-      audit.details || ""
-    ]);
-    
-    // Combine header and rows
-    const csvContent = [
-      headers.join(","),
-      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-    ].join("\n");
-    
-    // Create blob and download
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `audit-trail-${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const exportToCSV = async () => {
+    try {
+      // Get total record count first
+      const countRes = await fetch(`/api/audit-trail?page=1&pageSize=1`);
+      if (!countRes.ok) throw new Error("Failed to fetch audit trail count");
+      const countData = await countRes.json();
+      const totalRecords = countData.pagination.totalItems;
+      
+      // Define a reasonable batch size for exports
+      const BATCH_SIZE = 1000;
+      const MAX_RECORDS = 10000; // Maximum number of records to export
+      
+      // Check if the export would be too large
+      if (totalRecords > MAX_RECORDS) {
+        alert(`Export limited to ${MAX_RECORDS.toLocaleString()} records. The system has ${totalRecords.toLocaleString()} records in total. Please refine your search criteria or use filters to reduce the dataset.`);
+      }
+      
+      // Calculate number of pages needed based on batch size
+      const totalPages = Math.ceil(Math.min(totalRecords, MAX_RECORDS) / BATCH_SIZE);
+      let allData: AuditRecord[] = [];
+      
+      // Show export progress
+      const progressIndicator = document.createElement("div");
+      progressIndicator.style.position = "fixed";
+      progressIndicator.style.top = "50%";
+      progressIndicator.style.left = "50%";
+      progressIndicator.style.transform = "translate(-50%, -50%)";
+      progressIndicator.style.padding = "20px";
+      progressIndicator.style.background = "white";
+      progressIndicator.style.boxShadow = "0 4px 8px rgba(0,0,0,0.1)";
+      progressIndicator.style.borderRadius = "8px";
+      progressIndicator.style.zIndex = "9999";
+      
+      // Fetch data in batches
+      for (let page = 1; page <= totalPages; page++) {
+        // Update progress indicator
+        progressIndicator.innerHTML = `Exporting audit records: ${Math.round((page / totalPages) * 100)}%`;
+        if (page === 1) document.body.appendChild(progressIndicator);
+        
+        // Fetch this batch
+        const res = await fetch(`/api/audit-trail?page=${page}&pageSize=${BATCH_SIZE}`);
+        if (!res.ok) throw new Error(`Failed to fetch audit trail batch ${page}`);
+        const batchData = await res.json();
+        allData = [...allData, ...batchData.data];
+        
+        // Stop if we've reached the maximum records
+        if (allData.length >= MAX_RECORDS) break;
+      }
+      
+      // Remove progress indicator
+      document.body.removeChild(progressIndicator);
+      
+      // Apply any filters
+      if (searchQuery || actionFilter !== "all") {
+        allData = allData.filter((audit: AuditRecord) => {
+          const matchesSearch = !searchQuery || 
+            (audit.order?.orderNumber && audit.order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (audit.order?.tbfosNumber && audit.order.tbfosNumber.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (audit.order?.client && audit.order.client.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (audit.user?.username && audit.user.username.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (audit.user?.fullName && audit.user.fullName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (audit.location?.name && audit.location.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (audit.details && audit.details.toLowerCase().includes(searchQuery.toLowerCase()));
+            
+          const matchesAction = actionFilter === "all" || audit.action === actionFilter;
+          
+          return matchesSearch && matchesAction;
+        });
+      }
+      
+      if (allData.length === 0) {
+        alert("No data to export based on current filters.");
+        return;
+      }
+      
+      // Create CSV header
+      const headers = ["Timestamp", "Order #", "Action", "User", "Location", "Details"];
+      
+      // Create CSV rows
+      const rows = allData.map((audit: AuditRecord) => [
+        formatDate(audit.createdAt),
+        audit.order?.orderNumber || "",
+        getActionLabel(audit.action),
+        audit.user?.fullName || audit.user?.username || "",
+        audit.location?.name || "",
+        audit.details || ""
+      ]);
+      
+      // Combine header and rows
+      const csvContent = [
+        headers.join(","),
+        ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      ].join("\n");
+      
+      // Create blob and download
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `audit-trail-${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up URL object
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Failed to export audit trail:", error);
+      alert("Export failed. Please try again or export a smaller dataset by applying filters.");
+    }
+  };
+
+  // Handle search and filter changes
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    // Reset to first page when filtering
+    if (value !== searchQuery) {
+      setCurrentPage(1);
+    }
+  };
+  
+  const handleActionFilterChange = (value: string) => {
+    setActionFilter(value as any);
+    // Reset to first page when filtering
+    if (value !== actionFilter) {
+      setCurrentPage(1);
+    }
   };
 
   // Render loading state
@@ -215,7 +376,7 @@ export default function AuditTrailPage() {
               type="text"
               placeholder="Search audit trail..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="pl-10 w-full md:w-64"
             />
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
@@ -225,7 +386,10 @@ export default function AuditTrailPage() {
             <Button 
               variant="outline" 
               className="flex items-center"
-              onClick={() => setRefreshCounter(c => c + 1)}
+              onClick={() => {
+                setRefreshCounter(c => c + 1);
+                refetch();
+              }}
             >
               <RefreshCw className="mr-2 h-4 w-4" />
               Refresh
@@ -235,7 +399,7 @@ export default function AuditTrailPage() {
               variant="default" 
               className="flex items-center"
               onClick={exportToCSV}
-              disabled={!auditTrail || auditTrail.length === 0}
+              disabled={!paginatedAudit || paginatedAudit.data.length === 0}
             >
               <Download className="mr-2 h-4 w-4" />
               Export CSV
@@ -251,7 +415,7 @@ export default function AuditTrailPage() {
             <label className="text-sm font-medium mb-1 block">Action Type</label>
             <Select 
               value={actionFilter} 
-              onValueChange={(value) => setActionFilter(value as any)}
+              onValueChange={handleActionFilterChange}
             >
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Filter by action" />
@@ -270,32 +434,14 @@ export default function AuditTrailPage() {
             </Select>
           </div>
           
-          <div>
-            <label className="text-sm font-medium mb-1 block">Limit</label>
-            <Select 
-              value={limit.toString()} 
-              onValueChange={(value) => {
-                setLimit(parseInt(value));
-                setRefreshCounter(c => c + 1);
-              }}
-            >
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Number of records" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="50">50 Records</SelectItem>
-                <SelectItem value="100">100 Records</SelectItem>
-                <SelectItem value="250">250 Records</SelectItem>
-                <SelectItem value="500">500 Records</SelectItem>
-                <SelectItem value="1000">1000 Records</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
           <div className="ml-auto text-sm text-gray-500 pt-4 md:pt-0">
-            Total records: {auditTrail?.length || 0}
-            {filteredAuditTrail.length !== auditTrail?.length && (
-              <span> (filtered: {filteredAuditTrail.length})</span>
+            {paginatedAudit && (
+              <div>
+                Total records: {paginatedAudit.pagination.totalItems}
+                {isFiltering && (
+                  <span> (filtered: {filteredAuditTrail.length})</span>
+                )}
+              </div>
             )}
           </div>
         </CardContent>
@@ -310,7 +456,7 @@ export default function AuditTrailPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {!auditTrail || auditTrail.length === 0 ? (
+          {!paginatedAudit || paginatedAudit.data.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8">
               <History className="h-12 w-12 mb-2 text-gray-400" />
               <h3 className="text-lg font-medium mb-1">No Audit Records</h3>
@@ -318,7 +464,7 @@ export default function AuditTrailPage() {
                 There are no audit records to display
               </p>
             </div>
-          ) : filteredAuditTrail.length === 0 ? (
+          ) : filteredAuditTrail.length === 0 && isFiltering ? (
             <div className="flex flex-col items-center justify-center py-8">
               <AlertTriangle className="h-12 w-12 mb-2 text-amber-500" />
               <h3 className="text-lg font-medium mb-1">No Matching Records</h3>
@@ -340,7 +486,7 @@ export default function AuditTrailPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredAuditTrail.map((audit: any) => (
+                  {(isFiltering ? filteredAuditTrail : paginatedAudit.data).map((audit: AuditRecord) => (
                     <TableRow key={audit.id}>
                       <TableCell className="text-sm text-gray-500 whitespace-nowrap">
                         {formatDate(audit.createdAt)}
@@ -390,7 +536,32 @@ export default function AuditTrailPage() {
             </div>
           )}
         </CardContent>
+        {paginatedAudit && paginatedAudit.pagination.totalPages > 0 && !isFiltering && (
+          <CardFooter className="flex justify-center pt-2 border-t">
+            <Pagination
+              currentPage={paginatedAudit.pagination.page}
+              totalPages={paginatedAudit.pagination.totalPages}
+              onPageChange={handlePageChange}
+              pageSize={paginatedAudit.pagination.pageSize}
+              onPageSizeChange={handlePageSizeChange}
+              pageSizeOptions={[10, 20, 50, 100, 250]}
+              disabled={isLoading}
+              className="py-4"
+            />
+          </CardFooter>
+        )}
       </Card>
+      
+      {paginatedAudit && !isFiltering && (
+        <div className="flex justify-between text-sm text-gray-500">
+          <div>
+            Showing {paginatedAudit.data.length} of {paginatedAudit.pagination.totalItems} records
+          </div>
+          <div>
+            Page {paginatedAudit.pagination.page} of {paginatedAudit.pagination.totalPages}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -103,8 +103,11 @@ export async function setupAuth(app: Express) {
         return res.status(400).json({ message: "Username already exists" });
       }
 
+      // Force public registration to lowest role and active
       const user = await storage.createUser({
         ...req.body,
+  role: 'shop',
+  active: true as any,
         password: await hashPassword(req.body.password),
       });
 

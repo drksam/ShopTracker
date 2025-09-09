@@ -1,18 +1,17 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import "dotenv/config";
 import * as schema from "@shared/schema";
-import fs from "fs";
-import path from "path";
+import pg from "pg";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
+// SQLite fallback removed: schema now uses Postgres-only pg-core with namespacing
 
-// Ensure the data directory exists
-const dataDir = path.resolve(process.cwd(), ".data");
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is required. Postgres is mandatory now that the schema uses pg-core with the 'shoptracker' namespace. Set DATABASE_URL in your environment or .env file."
+  );
 }
 
-const dbPath = path.join(dataDir, "workshop.db");
-const sqlite = new Database(dbPath);
-export const db = drizzle(sqlite, { schema });
+const { Pool } = pg as any;
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const db: any = drizzlePg(pool, { schema });
 
-// Enable foreign keys
-sqlite.exec("PRAGMA foreign_keys = ON");
+export { db };

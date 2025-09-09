@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Location as LocationType, OrderLocation, Order } from "@shared/schema";
+import { Location as LocationType, OrderLocation, Order, Machine, type MachineAssignment } from "@shared/schema";
 import {
   Card,
   CardContent,
@@ -10,12 +10,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useMobile } from "@/hooks/use-mobile"; // Add this import
 import { ArrowLeft, Plus, RefreshCw } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import OrderCard from "@/components/orders/order-card";
 
 interface LocationPageProps {
@@ -30,6 +32,10 @@ export default function LocationPage({ locationId }: LocationPageProps) {
   const [activeTab, setActiveTab] = useState("current");
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
   const [showQueueDialog, setShowQueueDialog] = useState(false);
+  const isMobile = useMobile(); // Add this hook
+  const [selectedAssignOrderId, setSelectedAssignOrderId] = useState<number | null>(null);
+  const [selectedMachineIds, setSelectedMachineIds] = useState<number[]>([]);
+  const [assignedQty, setAssignedQty] = useState<number | "">("");
 
   // Fetch location details
   const { data: location, isLoading: isLoadingLocation } = useQuery<LocationType, Error>({
@@ -51,6 +57,34 @@ export default function LocationPage({ locationId }: LocationPageProps) {
     },
   });
 
+  // Fetch all locations to determine usedOrder precedence for eligibility checks
+  const { data: allLocations } = useQuery<LocationType[], Error>({
+    queryKey: ["/api/locations"],
+    queryFn: async () => {
+      const res = await fetch(`/api/locations`);
+      if (!res.ok) throw new Error("Failed to fetch locations");
+      return res.json();
+    },
+  });
+
+  // For eligibility checks, fetch all order-locations per order (batch via Promise.all)
+  const { data: orderLocsByOrder } = useQuery<Record<number, OrderLocation[]>, Error>({
+    queryKey: ["/api/order-locations/order", locationId, (orderLocations || []).map(o => o.orderId).join(",")],
+    enabled: !!orderLocations && orderLocations.length > 0,
+    queryFn: async () => {
+      const ids = Array.from(new Set((orderLocations || []).map(o => o.orderId)));
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          const res = await fetch(`/api/order-locations/order/${id}`);
+          if (!res.ok) throw new Error("Failed to fetch order-locations for order");
+          const data: OrderLocation[] = await res.json();
+          return [id, data] as const;
+        })
+      );
+      return Object.fromEntries(results);
+    }
+  });
+
   // Fetch queue for this location
   const { data: queueItems, isLoading: isLoadingQueue, refetch: refetchQueue } = useQuery<OrderWithLocationDetails[], Error>({
     queryKey: ["/api/queue/location", locationId],
@@ -59,6 +93,24 @@ export default function LocationPage({ locationId }: LocationPageProps) {
       if (!res.ok) throw new Error("Failed to fetch queue for this location");
       return res.json();
     },
+  });
+  // Fetch machines at this location
+  const { data: machines, isLoading: isLoadingMachines } = useQuery<Machine[], Error>({
+    queryKey: ["/api/machines/location", locationId],
+    queryFn: async () => {
+      const res = await fetch(`/api/machines/location/${locationId}`);
+      if (!res.ok) throw new Error("Failed to fetch machines for this location");
+      return res.json();
+    },
+  });
+  // Fetch current assignments at this location
+  const { data: assignments, refetch: refetchAssignments } = useQuery<(MachineAssignment & { order: Order; machine: Machine; })[], Error>({
+    queryKey: ["/api/assignments/location", locationId],
+    queryFn: async () => {
+      const res = await fetch(`/api/assignments/location/${locationId}`);
+      if (!res.ok) throw new Error("Failed to fetch assignments");
+      return res.json();
+    }
   });
   
   // Fetch orders that need this location (if this is a primary location)
@@ -85,6 +137,12 @@ export default function LocationPage({ locationId }: LocationPageProps) {
     
     return () => clearInterval(intervalId);
   }, [refetch, refetchQueue, refetchNeededOrders, location?.isPrimary]);
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      refetchAssignments();
+    }, 30000);
+    return () => clearInterval(intervalId);
+  }, [refetchAssignments]);
 
   // Location action mutations
   const startOrderMutation = useMutation({
@@ -186,6 +244,8 @@ export default function LocationPage({ locationId }: LocationPageProps) {
       });
     },
     onSuccess: () => {
+  // Ensure notification bell updates
+  queryClient.invalidateQueries({ queryKey: ["/api/help-requests/active"] });
       toast({
         title: "Help Requested",
         description: "Your help request has been submitted",
@@ -213,6 +273,31 @@ export default function LocationPage({ locationId }: LocationPageProps) {
     return orderLocations.filter(ol => ol.status === "done");
   };
 
+  // Compute Upcoming: assigned here but cannot start yet per gating rules
+  const getUpcomingOrders = () => {
+    if (!orderLocations || !location || !allLocations || !orderLocsByOrder) return [] as OrderWithLocationDetails[];
+    const usedOrderMap = new Map(allLocations.map(l => [l.id, l.usedOrder] as const));
+    const currentUsedOrder = usedOrderMap.get(location.id) ?? location.usedOrder;
+    return orderLocations.filter(ol => {
+      if (ol.order.isShipped) return false;
+      if (ol.status !== "not_started") return false;
+      const orderAllLocs = orderLocsByOrder[ol.orderId] || [];
+      // Use 1: can't start until globally queued
+      if (currentUsedOrder <= 1) {
+        return !(ol.order.globalQueuePosition && ol.order.globalQueuePosition > 0);
+      }
+      // For use > 1: check prior locations started
+      const priorLocs = orderAllLocs.filter(x => (usedOrderMap.get(x.locationId) ?? Infinity) < currentUsedOrder);
+      if (priorLocs.length === 0) {
+        // If order doesn't use any prior locations, it's eligible; not upcoming
+        return false;
+      }
+      const anyPriorNotStarted = priorLocs.some(x => x.status === "not_started");
+      // If any prior not started, this is upcoming (cannot start yet)
+      return anyPriorNotStarted;
+    });
+  };
+
   // Handlers for order actions
   const handleOrderClick = (orderId: number) => {
     setExpandedOrderId(expandedOrderId === orderId ? null : orderId);
@@ -225,10 +310,12 @@ export default function LocationPage({ locationId }: LocationPageProps) {
   const handleFinishOrder = (orderId: number) => {
     const orderLocation = orderLocations?.find(ol => ol.order.id === orderId);
     if (!orderLocation) return;
-    
+    // Use effective total considering multiplier when finishing
+    const multiplier = location?.countMultiplier ?? 1;
+    const effectiveTotal = Math.ceil((orderLocation.order.totalQuantity || 0) * multiplier);
     finishOrderMutation.mutate({ 
       orderId, 
-      completedQuantity: orderLocation.order.totalQuantity 
+      completedQuantity: effectiveTotal 
     });
   };
 
@@ -248,11 +335,119 @@ export default function LocationPage({ locationId }: LocationPageProps) {
     helpRequestMutation.mutate({ orderId, notes });
   };
 
+  // Reorder location queue
+  const reorderQueueMutation = useMutation({
+    mutationFn: async (data: { orderId: number; position: number }) => {
+      await apiRequest("POST", `/api/queue/location/${locationId}/reorder`, data);
+    },
+    onSuccess: () => {
+      refetchQueue();
+      toast({ title: "Queue updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
+  // Assign orders to machines
+  const assignMutation = useMutation({
+    mutationFn: async (payload: { orderId: number; machineIds: number[]; qty?: number }) => {
+      for (const mId of payload.machineIds) {
+        await apiRequest("POST", "/api/assignments", { orderId: payload.orderId, locationId, machineId: mId, assignedQuantity: payload.qty ?? 0 });
+      }
+    },
+    onSuccess: () => {
+      refetchAssignments();
+      toast({ title: "Assigned to machines" });
+      setSelectedAssignOrderId(null);
+      setSelectedMachineIds([]);
+      setAssignedQty("");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
+  // Update existing assignment quantity
+  const updateAssignmentQtyMutation = useMutation({
+    mutationFn: async (payload: { orderId: number; machineId: number; qty: number }) => {
+      await apiRequest("PUT", "/api/assignments", { orderId: payload.orderId, locationId, machineId: payload.machineId, assignedQuantity: payload.qty });
+    },
+    onSuccess: () => {
+      refetchAssignments();
+      toast({ title: "Assignment updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const toggleMachineSelect = (id: number) => {
+    setSelectedMachineIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  // --- Location Alert popups ---
+  type MachineAlert = {
+    id: number;
+    machineId: string;
+    message: string;
+    alertType: "help_request" | "notification" | "warning" | "error";
+    status: "pending" | "acknowledged" | "resolved";
+    createdAt: string | Date;
+  };
+
+  const { data: allPendingAlerts = [] } = useQuery<MachineAlert[]>({
+    queryKey: ["/api/alerts", "location", locationId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/alerts");
+      if (!res.ok) throw new Error("Failed to fetch alerts");
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const [alertQueue, setAlertQueue] = useState<MachineAlert[]>([]);
+  const [showAlertDialog, setShowAlertDialog] = useState(false);
+  const [activeAlert, setActiveAlert] = useState<MachineAlert | null>(null);
+  const [seenAlerts, setSeenAlerts] = useState<Set<number>>(new Set());
+
+  // Enqueue pending alerts for machines at this location, unseen only
+  useEffect(() => {
+    if (!machines || machines.length === 0) return;
+    const machineIdSet = new Set(machines.map(m => m.machineId));
+    const relevant = (allPendingAlerts || []).filter(a => a.status === "pending" && machineIdSet.has(a.machineId));
+    const newOnes = relevant.filter(a => !seenAlerts.has(a.id));
+    if (newOnes.length > 0) {
+      setAlertQueue(prev => [...prev, ...newOnes]);
+      setSeenAlerts(prev => new Set([...Array.from(prev), ...newOnes.map(a => a.id)]));
+    }
+  }, [allPendingAlerts, machines, seenAlerts]);
+
+  // Dequeue into active dialog
+  useEffect(() => {
+    if (!activeAlert && alertQueue.length > 0) {
+      setActiveAlert(alertQueue[0]);
+      setAlertQueue(prev => prev.slice(1));
+      setShowAlertDialog(true);
+    }
+  }, [alertQueue, activeAlert]);
+
+  const acknowledgeAlertMutation = useMutation({
+    mutationFn: async (alertId: number) => {
+      const res = await apiRequest("POST", `/api/alerts/${alertId}/acknowledge`);
+      if (!res.ok) throw new Error("Failed to acknowledge alert");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Alert acknowledged" });
+    }
+  });
+
   // Render loading state
   if (isLoadingLocation || isLoadingOrders) {
     return (
       <div className="space-y-6">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-2">
           <div className="flex items-center">
             <Button variant="ghost" size="icon" className="mr-2">
               <ArrowLeft className="h-5 w-5" />
@@ -263,7 +458,7 @@ export default function LocationPage({ locationId }: LocationPageProps) {
         </div>
         
         <Tabs defaultValue="current">
-          <TabsList className="mb-4">
+          <TabsList className="mb-4 w-full overflow-x-auto">
             <TabsTrigger value="current">Current Orders</TabsTrigger>
             <TabsTrigger value="completed">Completed</TabsTrigger>
           </TabsList>
@@ -293,18 +488,18 @@ export default function LocationPage({ locationId }: LocationPageProps) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      {/* Header - Made responsive */}
+      <div className={`flex ${isMobile ? 'flex-col gap-3' : 'justify-between items-center'} mb-6`}>
         <div className="flex items-center">
           <Button 
             variant="ghost" 
-            size="icon" 
+            size={isMobile ? "sm" : "icon"} 
             onClick={() => navigate("/locations")}
             className="mr-2"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className={isMobile ? "h-4 w-4" : "h-5 w-5"} />
           </Button>
-          <h1 className="text-2xl font-bold">{location.name}</h1>
+          <h1 className={`${isMobile ? "text-xl" : "text-2xl"} font-bold`}>{location.name}</h1>
         </div>
         
         <div className="flex items-center">
@@ -312,83 +507,190 @@ export default function LocationPage({ locationId }: LocationPageProps) {
             variant="outline" 
             onClick={() => refetch()}
             className="mr-2"
-            size="sm"
+            size={"sm"}
           >
-            <RefreshCw className="h-4 w-4 mr-1" /> Refresh
+            <RefreshCw className={`${isMobile ? "h-3 w-3" : "h-4 w-4"} mr-1`} /> 
+            {!isMobile && "Refresh"}
           </Button>
           <Button 
             onClick={() => setShowQueueDialog(true)}
-            size="sm"
+            size={"sm"}
           >
-            View Queue
+            {isMobile ? <Plus className="h-3 w-3" /> : "View Queue"}
           </Button>
         </div>
       </div>
       
-      {/* Orders Tabs */}
+      {/* Orders Tabs - Made responsive */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="current">
-            Current Orders {getCurrentOrders().length > 0 && `(${getCurrentOrders().length})`}
+        <TabsList className="mb-4 w-full overflow-x-auto flex">
+          {/* Upcoming tab to the left of In Queue */}
+          <TabsTrigger value="upcoming" className={isMobile ? "text-xs py-1 px-2" : ""}>
+            Upcoming {getUpcomingOrders().length > 0 && `(${getUpcomingOrders().length})`}
           </TabsTrigger>
-          <TabsTrigger value="completed">
+          {/* In Queue tab moved to the left of Current */}
+          <TabsTrigger value="queue" className={isMobile ? "text-xs py-1 px-2" : ""}>
+            In Queue {queueItems && queueItems.length > 0 && `(${queueItems.length})`}
+          </TabsTrigger>
+          <TabsTrigger value="current" className={isMobile ? "text-xs py-1 px-2" : ""}>
+            Current {getCurrentOrders().length > 0 && `(${getCurrentOrders().length})`}
+          </TabsTrigger>
+          <TabsTrigger value="completed" className={isMobile ? "text-xs py-1 px-2" : ""}>
             Completed {getCompletedOrders().length > 0 && `(${getCompletedOrders().length})`}
           </TabsTrigger>
-          {/* Always show the tab for primary locations */}
-          {location.isPrimary && (
-            <TabsTrigger value="needed">
-              Needed Orders {ordersNeedingLocation && ordersNeedingLocation.length > 0 && `(${ordersNeedingLocation.length})`}
-            </TabsTrigger>
-          )}
-          {/* Fix LSP type error by removing console.log */}
         </TabsList>
+
+        {/* Upcoming tab content (read-only heads-up list) */}
+        <TabsContent value="upcoming">
+          {getUpcomingOrders().length === 0 ? (
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-center text-muted-foreground">No upcoming orders blocked from starting.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {getUpcomingOrders()
+                .slice() // avoid mutating
+                .sort((a, b) => {
+                  // Rush first, then global queue position, then createdAt
+                  if (a.order.rush && !b.order.rush) return -1;
+                  if (!a.order.rush && b.order.rush) return 1;
+                  const ag = a.order.globalQueuePosition ?? Number.POSITIVE_INFINITY;
+                  const bg = b.order.globalQueuePosition ?? Number.POSITIVE_INFINITY;
+                  if (ag !== bg) return ag - bg;
+                  const ac = new Date(a.order.createdAt as any).getTime();
+                  const bc = new Date(b.order.createdAt as any).getTime();
+                  return ac - bc;
+                })
+                .map(item => {
+                  const usedOrderMap = new Map((allLocations || []).map(l => [l.id, l.usedOrder] as const));
+                  const currentUsedOrder = usedOrderMap.get(location.id) ?? location.usedOrder;
+                  const orderAllLocs = orderLocsByOrder?.[item.orderId] || [];
+                  const priorLocs = orderAllLocs.filter(x => (usedOrderMap.get(x.locationId) ?? Infinity) < currentUsedOrder);
+                  const blockedByGlobal = currentUsedOrder <= 1 && !(item.order.globalQueuePosition && item.order.globalQueuePosition > 0);
+                  const blockedByPrior = priorLocs.some(x => x.status === "not_started");
+                  const reason = blockedByGlobal
+                    ? "Waiting for Global Queue"
+                    : (blockedByPrior ? "Waiting for prior location to start" : "");
+                  return (
+                    <div key={item.id} className="flex items-center justify-between gap-3 py-2 px-3 border rounded-md bg-muted/30">
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">#
+                          <button type="button" className="text-primary hover:underline" onClick={() => navigate(`/orders/${item.order.id}`)}>
+                            {item.order.orderNumber}
+                          </button>
+                           — {item.order.client}
+                        </div>
+                        {!location?.noCount && (
+                          <div className="text-xs text-gray-500">
+                            Qty {Math.ceil((item.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
+                            {location?.countMultiplier && location.countMultiplier !== 1 ? (
+                              <span className="text-[10px] text-muted-foreground ml-1">({item.order.totalQuantity} x {location.countMultiplier})</span>
+                            ) : null}
+                          </div>
+                        )}
+                        {item.order.rush && <span className="text-xs font-semibold text-red-600">RUSH</span>}
+                        {reason && <div className="text-xs text-muted-foreground mt-1">{reason}</div>}
+                      </div>
+                      {/* Read-only: no actions */}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* In Queue tab content (replaces prior "Needed" tab) */}
+        <TabsContent value="queue">
+          {(() => {
+            // Fallback: derive queue from orderLocations if queue endpoint empty
+            const fallback = (orderLocations || []).filter(ol => ol.status === "in_queue");
+            const effectiveQueue = (queueItems && queueItems.length > 0) ? queueItems : fallback;
+            if (!effectiveQueue || effectiveQueue.length === 0) {
+              return (
+                <Card>
+                  <CardContent className="pt-6">
+                    <p className="text-center text-muted-foreground">No orders currently in queue at this location.</p>
+                  </CardContent>
+                </Card>
+              );
+            }
+            return (
+              <div className="space-y-2">
+              {[...effectiveQueue]
+                .sort((a, b) => {
+                  // Rush items first
+                  if (a.order.rush && !b.order.rush) return -1;
+                  if (!a.order.rush && b.order.rush) return 1;
+                  if (a.order.rush && b.order.rush) {
+                    const ar = a.order.rushSetAt ? new Date(a.order.rushSetAt as any).getTime() : 0;
+                    const br = b.order.rushSetAt ? new Date(b.order.rushSetAt as any).getTime() : 0;
+                    if (ar !== br) return ar - br;
+                  }
+                  return (a.queuePosition || 0) - (b.queuePosition || 0);
+                })
+                .map((item, idx) => (
+                <div key={item.id} className="flex items-center justify-between gap-3 py-2 px-3 border rounded-md">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">#
+                      <button type="button" className="text-primary hover:underline" onClick={() => navigate(`/orders/${item.order.id}`)}>
+                        {item.order.orderNumber}
+                      </button>
+                       — {item.order.client}
+                    </div>
+                    {!location?.noCount && (
+                      <div className="text-xs text-gray-500">
+                        Qty {Math.ceil((item.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
+                        {location?.countMultiplier && location.countMultiplier !== 1 ? (
+                          <span className="text-[10px] text-muted-foreground ml-1">({item.order.totalQuantity} x {location.countMultiplier})</span>
+                        ) : null}
+                      </div>
+                    )}
+                    {item.order.rush && <span className="text-xs font-semibold text-red-600">RUSH</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">Pos</span>
+                    <Select
+                      value={String(item.queuePosition || idx + 1)}
+                      onValueChange={(v) => reorderQueueMutation.mutate({ orderId: item.orderId, position: parseInt(v) })}
+                    >
+                      <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: effectiveQueue.length }, (_, i) => i + 1).map(n => (
+                          <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" onClick={() => handleStartOrder(item.order.id)}>
+                      Start
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            );
+          })()}
+        </TabsContent>
 
         <TabsContent value="current">
           {getCurrentOrders().length === 0 ? (
             <Card>
               <CardContent className="pt-6">
-                <div className="flex flex-col items-center justify-center text-neutral-500 py-8">
-                  <svg 
-                    xmlns="http://www.w3.org/2000/svg" 
-                    viewBox="0 0 24 24" 
-                    fill="none" 
-                    stroke="currentColor" 
-                    strokeWidth="2" 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    className="h-12 w-12 mb-2 text-gray-400"
-                  >
-                    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"></path>
-                    <path d="M12 8v4"></path>
-                    <path d="M12 16h.01"></path>
-                  </svg>
-                  <h3 className="text-lg font-medium mb-1">No Current Orders</h3>
-                  <p className="text-sm text-center mb-4">
-                    You don't have any orders in progress or paused at this location
-                  </p>
-                  <Button 
-                    onClick={() => setShowQueueDialog(true)} 
-                    className="mt-2"
-                  >
-                    <Plus className="mr-1 h-4 w-4" /> Start New Order from Queue
-                  </Button>
-                </div>
+                <p className="text-center text-muted-foreground">No orders currently assigned to this location.</p>
               </CardContent>
             </Card>
           ) : (
-            <div>
-              {getCurrentOrders().map((orderLocation) => (
+            <div className={`grid ${isMobile ? 'grid-cols-1 gap-3' : 'grid-cols-1 lg:grid-cols-2 gap-4'}`}>
+        {getCurrentOrders().map(order => (
                 <OrderCard
-                  key={orderLocation.id}
-                  orderLocation={orderLocation}
-                  onClick={() => handleOrderClick(orderLocation.order.id)}
-                  onStart={() => handleStartOrder(orderLocation.order.id)}
-                  onFinish={() => handleFinishOrder(orderLocation.order.id)}
-                  onPause={() => handlePauseOrder(orderLocation.order.id)}
-                  onResume={() => handleResumeOrder(orderLocation.order.id)}
-                  onUpdateCount={(count) => handleUpdateCount(orderLocation.order.id, count)}
-                  onRequestHelp={(notes) => handleRequestHelp(orderLocation.order.id, notes)}
-                  expanded={expandedOrderId === orderLocation.order.id}
+                  key={order.id}
+                  order={order}
+                  expanded={expandedOrderId === order.id}
+                  onExpand={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
+                  isCompleted={false}
+          hideQuantity={!!location?.noCount}
+          totalOverride={Math.ceil((order.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
                 />
               ))}
             </div>
@@ -399,143 +701,35 @@ export default function LocationPage({ locationId }: LocationPageProps) {
           {getCompletedOrders().length === 0 ? (
             <Card>
               <CardContent className="pt-6">
-                <div className="flex flex-col items-center justify-center text-neutral-500 py-8">
-                  <svg 
-                    xmlns="http://www.w3.org/2000/svg" 
-                    viewBox="0 0 24 24" 
-                    fill="none" 
-                    stroke="currentColor" 
-                    strokeWidth="2" 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    className="h-12 w-12 mb-2 text-gray-400"
-                  >
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                  </svg>
-                  <h3 className="text-lg font-medium mb-1">No Completed Orders</h3>
-                  <p className="text-sm text-center">
-                    You don't have any completed orders at this location yet
-                  </p>
-                </div>
+                <p className="text-center text-muted-foreground">No completed orders at this location.</p>
               </CardContent>
             </Card>
           ) : (
-            <div>
-              {getCompletedOrders().map((orderLocation) => (
+            <div className={`grid ${isMobile ? 'grid-cols-1 gap-3' : 'grid-cols-1 lg:grid-cols-2 gap-4'}`}>
+        {getCompletedOrders().map(order => (
                 <OrderCard
-                  key={orderLocation.id}
-                  orderLocation={orderLocation}
-                  onClick={() => handleOrderClick(orderLocation.order.id)}
-                  expanded={expandedOrderId === orderLocation.order.id}
+                  key={order.id}
+                  order={order}
+                  expanded={expandedOrderId === order.id}
+                  onExpand={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
+                  isCompleted={true}
+                  className={isMobile ? "opacity-90" : ""}
+          hideQuantity={!!location?.noCount}
+          totalOverride={Math.ceil((order.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
                 />
               ))}
             </div>
           )}
         </TabsContent>
 
-        {location.isPrimary && (
-          <TabsContent value="needed">
-            {isLoadingNeededOrders ? (
-              <div className="py-4">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-32 w-full mb-4" />
-                ))}
-              </div>
-            ) : !ordersNeedingLocation || ordersNeedingLocation.length === 0 ? (
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex flex-col items-center justify-center text-neutral-500 py-8">
-                    <svg 
-                      xmlns="http://www.w3.org/2000/svg" 
-                      viewBox="0 0 24 24" 
-                      fill="none" 
-                      stroke="currentColor" 
-                      strokeWidth="2" 
-                      strokeLinecap="round" 
-                      strokeLinejoin="round" 
-                      className="h-12 w-12 mb-2 text-gray-400"
-                    >
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <line x1="12" y1="8" x2="12" y2="12"></line>
-                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                    </svg>
-                    <h3 className="text-lg font-medium mb-1">No Orders Need This Location</h3>
-                    <p className="text-sm text-center">
-                      There are no orders that require processing at this primary location
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <div>
-                {ordersNeedingLocation.map((order) => (
-                  <Card key={order.id} className="mb-4 overflow-hidden">
-                    <CardContent className="p-0">
-                      <div className="p-4 border-b bg-accent/10">
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <div className="flex items-center">
-                              <span className="text-lg font-medium text-primary">{order.orderNumber}</span>
-                              <span className="ml-2 text-sm text-muted-foreground">({order.tbfosNumber})</span>
-                            </div>
-                            <div className="text-sm text-gray-700">{order.client}</div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button 
-                              size="sm"
-                              onClick={() => {
-                                // Create a new order location for this primary location
-                                apiRequest("POST", "/api/order-locations", {
-                                  orderId: order.id,
-                                  locationId: locationId,
-                                  queuePosition: 9999 // Will be reordered by the backend
-                                }).then(() => {
-                                  refetchNeededOrders();
-                                  refetchQueue();
-                                  toast({
-                                    title: "Order Added",
-                                    description: "Order added to this location's queue",
-                                  });
-                                }).catch(() => {
-                                  toast({
-                                    title: "Error",
-                                    description: "Failed to add order to this location",
-                                    variant: "destructive",
-                                  });
-                                });
-                              }}
-                            >
-                              <Plus className="h-4 w-4 mr-1" /> Add to Queue
-                            </Button>
-                          </div>
-                        </div>
-                        <div className="flex justify-between items-center mt-3 text-sm">
-                          <div className="flex space-x-3 text-muted-foreground">
-                            <div>Due: {new Date(order.dueDate).toLocaleDateString()}</div>
-                            <div>Qty: {order.totalQuantity}</div>
-                          </div>
-                        </div>
-                        {order.description && (
-                          <div className="mt-2 text-sm text-gray-600">
-                            <span className="font-medium">Description:</span> {order.description}
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        )}
+  {/* Removed legacy "Needed" tab per request */}
       </Tabs>
-      
-      {/* Queue Dialog */}
+
+      {/* Queue Dialog - Made mobile responsive */}
       <Dialog open={showQueueDialog} onOpenChange={setShowQueueDialog}>
-        <DialogContent>
+        <DialogContent className={isMobile ? "max-w-[90vw] p-4" : "max-w-lg"}>
           <DialogHeader>
-            <DialogTitle>Queue for {location.name}</DialogTitle>
+            <DialogTitle className={isMobile ? "text-lg" : "text-xl"}>Location Queue</DialogTitle>
           </DialogHeader>
           
           {isLoadingQueue ? (
@@ -545,28 +739,51 @@ export default function LocationPage({ locationId }: LocationPageProps) {
               ))}
             </div>
           ) : queueItems && queueItems.length > 0 ? (
-            <div className="max-h-[60vh] overflow-y-auto">
-              {queueItems.map((item, index) => (
-                <div 
-                  key={item.id} 
-                  className="border-b pb-3 mb-3 last:border-0 last:mb-0 last:pb-0"
-                >
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <span className="font-medium">Queue #{item.queuePosition}:</span>{" "}
-                      <span className="text-primary">{item.order.orderNumber} ({item.order.client})</span>
-                      <div className="text-sm text-gray-500">
-                        Due: {new Date(item.order.dueDate).toLocaleDateString()}
-                        {" • "}Qty: {item.order.totalQuantity}
-                      </div>
+            <div className="max-h-[60vh] overflow-y-auto space-y-2">
+              {[...queueItems]
+                .sort((a, b) => {
+                  if (a.order.rush && !b.order.rush) return -1;
+                  if (!a.order.rush && b.order.rush) return 1;
+                  if (a.order.rush && b.order.rush) {
+                    const ar = a.order.rushSetAt ? new Date(a.order.rushSetAt as any).getTime() : 0;
+                    const br = b.order.rushSetAt ? new Date(b.order.rushSetAt as any).getTime() : 0;
+                    if (ar !== br) return ar - br;
+                  }
+                  return (a.queuePosition || 0) - (b.queuePosition || 0);
+                })
+                .map((item, idx) => (
+                <div key={item.id} className="flex items-center justify-between gap-3 py-2 border-b last:border-0">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">#
+                      <button type="button" className="text-primary hover:underline" onClick={() => { setShowQueueDialog(false); navigate(`/orders/${item.order.id}`); }}>
+                        {item.order.orderNumber}
+                      </button>
+                       — {item.order.client}
                     </div>
-                    <Button
-                      onClick={() => {
-                        handleStartOrder(item.order.id);
-                        setShowQueueDialog(false);
-                      }}
-                      disabled={startOrderMutation.isPending}
+                    {!location?.noCount && (
+                      <div className="text-xs text-gray-500">
+                        Qty {Math.ceil((item.order.totalQuantity || 0) * (location?.countMultiplier ?? 1))}
+                        {location?.countMultiplier && location.countMultiplier !== 1 ? (
+                          <span className="text-[10px] text-muted-foreground ml-1">({item.order.totalQuantity} x {location.countMultiplier})</span>
+                        ) : null}
+                      </div>
+                    )}
+                    {item.order.rush && <span className="text-xs font-semibold text-red-600">RUSH</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">Pos</span>
+                    <Select
+                      value={String(item.queuePosition || idx + 1)}
+                      onValueChange={(v) => reorderQueueMutation.mutate({ orderId: item.orderId, position: parseInt(v) })}
                     >
+                      <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: queueItems.length }, (_, i) => i + 1).map(n => (
+                          <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" onClick={() => { handleStartOrder(item.order.id); setShowQueueDialog(false); }}>
                       Start
                     </Button>
                   </div>
@@ -575,26 +792,156 @@ export default function LocationPage({ locationId }: LocationPageProps) {
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-8">
-              <svg 
-                xmlns="http://www.w3.org/2000/svg" 
-                viewBox="0 0 24 24" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                className="h-12 w-12 mb-2 text-gray-400"
-              >
-                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
-                <path d="M8 2v4"></path>
-                <path d="M16 2v4"></path>
-                <path d="M2 10h20"></path>
-                <path d="M9 16h6"></path>
-              </svg>
-              <h3 className="text-lg font-medium mb-1">Queue is Empty</h3>
-              <p className="text-sm text-center">
-                There are no orders in the queue for this location
-              </p>
+              <p className="text-sm text-muted-foreground">Queue Empty</p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Assignment panel */}
+      {machines && machines.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Assign Orders to Machines</CardTitle>
+            <CardDescription>Select an order in queue and assign to one or more machines</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+              <div>
+                <label className="text-sm mb-1 block">Order</label>
+                {(() => {
+                  // Merge queue items with any orders at this location that are not started or in queue
+                  const map = new Map<number, OrderWithLocationDetails>();
+                  (queueItems || []).forEach(item => map.set(item.orderId, item));
+                  (orderLocations || [])
+                    .filter(ol => ol.status === "in_queue" || ol.status === "not_started")
+                    .forEach(ol => {
+                      if (!map.has(ol.orderId)) map.set(ol.orderId, ol as OrderWithLocationDetails);
+                    });
+                  const assignable = Array.from(map.values());
+                  // Sort: queued first by queuePosition, then by created date newest last
+                  assignable.sort((a, b) => {
+                    const aq = a.queuePosition ?? Number.POSITIVE_INFINITY;
+                    const bq = b.queuePosition ?? Number.POSITIVE_INFINITY;
+                    if (aq !== bq) return aq - bq;
+                    const ac = new Date(a.order.createdAt as any).getTime();
+                    const bc = new Date(b.order.createdAt as any).getTime();
+                    return ac - bc;
+                  });
+                  return (
+                    <Select value={selectedAssignOrderId ? String(selectedAssignOrderId) : ""} onValueChange={(v) => setSelectedAssignOrderId(parseInt(v))}>
+                      <SelectTrigger><SelectValue placeholder="Select order" /></SelectTrigger>
+                      <SelectContent>
+                        {assignable.map(q => (
+                          <SelectItem key={q.orderId} value={String(q.orderId)}>
+                            #{q.order.orderNumber} — {q.order.client}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  );
+                })()}
+              </div>
+              <div>
+                <label className="text-sm mb-1 block">Machines</label>
+                <div className="flex flex-wrap gap-2">
+                  {machines.map(m => (
+                    <button
+                      type="button"
+                      key={m.id}
+                      onClick={() => toggleMachineSelect(m.id)}
+                      className={`px-3 py-1 rounded border text-sm ${selectedMachineIds.includes(m.id) ? 'bg-primary text-white' : 'bg-white'}`}
+                    >{m.name}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-sm mb-1 block">Assign Qty (optional)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={assignedQty}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAssignedQty(v === '' ? '' : Math.max(0, Math.floor(Number(v))));
+                  }}
+                  className="w-full border rounded px-2 py-1 text-sm"
+                  placeholder="e.g. 20"
+                />
+                {location?.countMultiplier && location.countMultiplier !== 1 && (
+                  <div className="text-[10px] text-muted-foreground mt-1">Effective totals use multiplier x{location.countMultiplier}</div>
+                )}
+              </div>
+              <div>
+                <Button
+                  disabled={!selectedAssignOrderId || selectedMachineIds.length === 0 || assignMutation.isPending}
+                  onClick={() => selectedAssignOrderId && assignMutation.mutate({ orderId: selectedAssignOrderId, machineIds: selectedMachineIds, qty: assignedQty === '' ? undefined : Number(assignedQty) })}
+                >Assign</Button>
+              </div>
+            </div>
+            {assignments && assignments.length > 0 && (
+              <div className="text-sm text-muted-foreground space-y-2">
+                <div className="font-medium text-foreground">Current assignments</div>
+                <div className="space-y-1">
+                  {assignments.map(a => (
+                    <div key={`${a.orderId}-${a.machineId}`} className="flex items-center gap-2">
+                      <div className="min-w-0">
+                        <span className="font-medium">#{a.order.orderNumber}</span>
+                        <span className="mx-1">→</span>
+                        <span>{a.machine.name}</span>
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        defaultValue={(a as any).assignedQuantity || 0}
+                        onChange={(e) => {
+                          const v = Math.max(0, Math.floor(Number(e.target.value || '0')));
+                          (e.currentTarget as any)._pendingVal = v;
+                        }}
+                        className="w-20 border rounded px-2 py-1 text-xs"
+                      />
+                      <Button size="sm" variant="outline" onClick={(e) => {
+                        const input = (e.currentTarget.previousSibling as HTMLInputElement);
+                        const qty = (input as any)._pendingVal ?? Number(input.value) ?? 0;
+                        updateAssignmentQtyMutation.mutate({ orderId: a.orderId, machineId: a.machineId, qty });
+                      }} disabled={updateAssignmentQtyMutation.isPending}>Save</Button>
+                      {(a as any).assignedQuantity ? (
+                        <span className="text-xs text-muted-foreground">Assigned: {(a as any).assignedQuantity}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Incoming Alert Popup */}
+      <Dialog open={showAlertDialog} onOpenChange={(open) => {
+        setShowAlertDialog(open);
+        if (!open) {
+          setActiveAlert(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Alert</DialogTitle>
+            <DialogDescription>
+              {activeAlert ? new Date(activeAlert.createdAt).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {activeAlert && (
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">Machine: {activeAlert.machineId}</div>
+              <div className="text-base">{activeAlert.message}</div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => {
+                  if (activeAlert) acknowledgeAlertMutation.mutate(activeAlert.id);
+                  setShowAlertDialog(false);
+                }}>Acknowledge</Button>
+                <Button onClick={() => setShowAlertDialog(false)}>Close</Button>
+              </div>
             </div>
           )}
         </DialogContent>

@@ -11,7 +11,7 @@ import LocationsPage from "@/pages/locations-page";
 import LocationDisplayPage from "@/pages/location-display-page";
 import ShippingPage from "@/pages/shipping-page";
 import OverviewPage from "@/pages/overview-page";
-import UserManagementPage from "@/pages/user-management-page";
+import UserManagementPage from "./pages/user-management-page";
 import MachineManagementPage from "@/pages/machine-management-page";
 import MachinePage from "@/pages/machine-page";
 import AuditTrailPage from "@/pages/audit-trail-page";
@@ -19,7 +19,6 @@ import SettingsPage from "@/pages/settings-page";
 import RfidCardsPage from "@/pages/rfid-cards-page";
 import AccessLevelsPage from "@/pages/access-levels-page";
 import AccessLogsPage from "@/pages/access-logs-page";
-import ApiConfigPage from "@/pages/api-config-page";
 import AlertCenterPage from "@/pages/alert-center-page";
 import { AuthProvider } from "./hooks/use-auth";
 import { ProtectedRoute } from "./lib/protected-route";
@@ -72,9 +71,10 @@ const AuthenticatedRoutes = () => {
         )}
       </Route>
       
+      {/* Now enabled - ShippingPage has been created */}
       <ProtectedRoute path="/shipping" component={ShippingPage} />
       <ProtectedRoute path="/overview" component={OverviewPage} />
-      <ProtectedRoute path="/users" component={UserManagementPage} />
+  <ProtectedRoute path="/users" component={UserManagementPage} />
       <ProtectedRoute path="/machines" component={MachineManagementPage} />
       
       {/* Regular machine detail page */}
@@ -88,11 +88,13 @@ const AuthenticatedRoutes = () => {
       </Route>
       
       <ProtectedRoute path="/audit" component={AuditTrailPage} />
+      {/* Now enabled - SettingsPage has been created */}
       <ProtectedRoute path="/settings" component={SettingsPage} />
+      {/* Now enabled - RfidCardsPage has been created */}
       <ProtectedRoute path="/rfid-cards" component={RfidCardsPage} />
       <ProtectedRoute path="/access-levels" component={AccessLevelsPage} />
       <ProtectedRoute path="/access-logs" component={AccessLogsPage} />
-      <ProtectedRoute path="/api-config" component={ApiConfigPage} />
+  {/* API Config moved into Settings; route removed */}
       <ProtectedRoute path="/alerts" component={AlertCenterPage} />
       
       <Route component={NotFound} />

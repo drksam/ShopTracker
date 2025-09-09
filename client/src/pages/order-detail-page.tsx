@@ -25,6 +25,9 @@ import {
 import OrderStatusIndicator from "@/components/orders/order-status-indicator";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useResponsive } from "@/hooks/use-mobile";
+import { QuantityUpdateDialog } from "@/components/orders/quantity-update-dialog";
+import { HelpRequestDialog } from "@/components/orders/help-request-dialog";
 import {
   ArrowLeft,
   Edit,
@@ -39,6 +42,8 @@ import {
   RefreshCw,
   HelpCircle,
   Plus,
+  MoreVertical,
+  Trash2,
 } from "lucide-react";
 import {
   Dialog,
@@ -46,8 +51,13 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu";
 import OrderForm from "@/components/orders/order-form";
 
 interface OrderDetailPageProps {
@@ -58,6 +68,15 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [isOrderFormOpen, setIsOrderFormOpen] = useState(false);
+  const isMobile = useResponsive();
+  const [expandedLocationId, setExpandedLocationId] = useState<number | null>(null);
+  
+  // State for dialogs
+  const [isQuantityDialogOpen, setIsQuantityDialogOpen] = useState(false);
+  const [isShipDialogOpen, setIsShipDialogOpen] = useState(false);
+  const [isHelpDialogOpen, setIsHelpDialogOpen] = useState(false);
+  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
+  const [quantityDialogPurpose, setQuantityDialogPurpose] = useState<'update' | 'complete' | 'ship'>('update');
 
   // Fetch order details
   const {
@@ -70,6 +89,21 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
       const res = await fetch(`/api/orders/${orderId}`);
       if (!res.ok) throw new Error("Failed to fetch order details");
       return res.json();
+    },
+  });
+
+  // Remove from all queues mutation
+  const removeFromQueuesMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/queue/global/${orderId}/remove`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      refetch();
+      toast({ title: "Removed from queues", description: "Order removed from global and location queues." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: `Failed to remove from queues: ${error.message}`, variant: "destructive" });
     },
   });
 
@@ -104,28 +138,16 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
   const handleShip = async () => {
     if (!order) return;
     
-    // Ask for quantity to ship
-    const quantity = prompt(
-      `Enter quantity to ship (max: ${order.totalQuantity}, current shipped: ${order.shippedQuantity}):`,
-      (order.totalQuantity - order.shippedQuantity).toString()
-    );
-    
-    if (quantity === null) return;
-    
-    const parsedQuantity = parseInt(quantity);
-    
-    // Validate quantity
-    if (isNaN(parsedQuantity) || parsedQuantity <= 0 || parsedQuantity > order.totalQuantity) {
-      toast({
-        title: "Invalid Quantity",
-        description: "Please enter a valid quantity",
-        variant: "destructive",
-      });
-      return;
-    }
+    setQuantityDialogPurpose('ship');
+    setIsShipDialogOpen(true);
+  };
+  
+  // Handle ship quantity submission from dialog
+  const handleShipSubmit = (quantity: number) => {
+    if (!order) return;
     
     // Check if trying to ship more than available
-    if (parsedQuantity + order.shippedQuantity > order.totalQuantity) {
+    if (quantity + order.shippedQuantity > order.totalQuantity) {
       toast({
         title: "Quantity Exceeds Total",
         description: `You can ship at most ${order.totalQuantity - order.shippedQuantity} more units`,
@@ -134,7 +156,7 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
       return;
     }
     
-    shipMutation.mutate(order.shippedQuantity + parsedQuantity);
+    shipMutation.mutate(order.shippedQuantity + quantity);
   };
 
   // Location start/finish/pause mutations
@@ -315,30 +337,16 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
   const handleFinishLocation = (locationId: number) => {
     if (!order) return;
     
-    const orderLocation = order.locations.find(loc => loc.locationId === locationId);
-    if (!orderLocation) return;
+    setSelectedLocationId(locationId);
+    setQuantityDialogPurpose('complete');
+    setIsQuantityDialogOpen(true);
+  };
+  
+  // Handle finish quantity submission from dialog
+  const handleFinishQuantitySubmit = (quantity: number) => {
+    if (!selectedLocationId) return;
     
-    // Ask for completed quantity if not already set
-    const quantity = prompt(
-      `Enter completed quantity (current: ${orderLocation.completedQuantity}, total: ${order.totalQuantity}):`,
-      order.totalQuantity.toString()
-    );
-    
-    if (quantity === null) return;
-    
-    const parsedQuantity = parseInt(quantity);
-    
-    // Validate quantity
-    if (isNaN(parsedQuantity) || parsedQuantity < 0 || parsedQuantity > order.totalQuantity) {
-      toast({
-        title: "Invalid Quantity",
-        description: "Please enter a valid quantity",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    finishLocationMutation.mutate({ locationId, quantity: parsedQuantity });
+    finishLocationMutation.mutate({ locationId: selectedLocationId, quantity });
   };
 
   const handlePauseLocation = (locationId: number) => {
@@ -348,35 +356,52 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
   const handleUpdateQuantity = (locationId: number) => {
     if (!order) return;
     
-    const orderLocation = order.locations.find(loc => loc.locationId === locationId);
-    if (!orderLocation) return;
+    setSelectedLocationId(locationId);
+    setQuantityDialogPurpose('update');
+    setIsQuantityDialogOpen(true);
+  };
+  
+  // Handle update quantity submission from dialog
+  const handleUpdateQuantitySubmit = (quantity: number) => {
+    if (!selectedLocationId) return;
     
-    // Ask for new quantity
-    const quantity = prompt(
-      `Enter new completed quantity (current: ${orderLocation.completedQuantity}, total: ${order.totalQuantity}):`,
-      orderLocation.completedQuantity.toString()
-    );
-    
-    if (quantity === null) return;
-    
-    const parsedQuantity = parseInt(quantity);
-    
-    // Validate quantity
-    if (isNaN(parsedQuantity) || parsedQuantity < 0 || parsedQuantity > order.totalQuantity) {
-      toast({
-        title: "Invalid Quantity",
-        description: "Please enter a valid quantity",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    updateQuantityMutation.mutate({ locationId, quantity: parsedQuantity });
+    updateQuantityMutation.mutate({ locationId: selectedLocationId, quantity });
   };
 
   const handleRequestHelp = (locationId: number) => {
-    const notes = prompt("Enter details about the help needed:");
-    helpRequestMutation.mutate({ locationId, notes: notes || undefined });
+    setSelectedLocationId(locationId);
+    setIsHelpDialogOpen(true);
+  };
+  
+  // Handle help request submission from dialog
+  const handleHelpRequestSubmit = (notes: string) => {
+    if (!selectedLocationId) return;
+    
+    helpRequestMutation.mutate({ 
+      locationId: selectedLocationId, 
+      notes: notes || undefined 
+    });
+  };
+
+  // Toggle expanded location for mobile view
+  const toggleExpandLocation = (locationId: number) => {
+    setExpandedLocationId(expandedLocationId === locationId ? null : locationId);
+  };
+
+  // Get the current quantity for the selected location
+  const getCurrentQuantity = (): number => {
+    if (!order || !selectedLocationId) return 0;
+    
+    const orderLocation = order.locations.find(loc => loc.locationId === selectedLocationId);
+    return orderLocation ? orderLocation.completedQuantity : 0;
+  };
+
+  // Get the location name for the selected location
+  const getSelectedLocationName = (): string => {
+    if (!selectedLocationId || !locations) return "Location";
+    
+    const location = locations.find(loc => loc.id === selectedLocationId);
+    return location ? location.name : `Location ${selectedLocationId}`;
   };
 
   // Render loading state
@@ -400,332 +425,460 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
   if (!order) {
     return (
       <div className="flex flex-col items-center justify-center h-64">
-        <h2 className="text-xl font-bold mb-2">Order Not Found</h2>
-        <p className="text-gray-500 mb-4">The requested order could not be found.</p>
-        <Button onClick={() => navigate("/orders")}>
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to Orders
+        <h1 className="text-2xl font-bold mb-4">Order Not Found</h1>
+        <p className="text-muted-foreground mb-6">The requested order could not be found or you don't have permission to view it.</p>
+        <Button onClick={() => navigate("/orders")} className="flex items-center">
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Orders
         </Button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-4">
-        <div className="flex items-center mb-4 sm:mb-0">
+    <div className="space-y-6 pb-12">
+      {/* Back button and header - now more mobile friendly with better spacing */}
+      <div className={`flex ${isMobile ? 'flex-col' : 'items-center justify-between'} mb-6`}>
+        <div className="flex items-center mb-2">
           <Button 
             variant="ghost" 
-            size="icon" 
+            size={isMobile ? "sm" : "icon"} 
             onClick={() => navigate("/orders")}
             className="mr-2"
           >
             <ArrowLeft className="h-5 w-5" />
+            {isMobile && <span className="ml-1">Back</span>}
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold">Order #{order.orderNumber}</h1>
-            <p className="text-gray-500">Created on {new Date(order.createdAt).toLocaleDateString()}</p>
-          </div>
+          <h1 className={`font-bold ${isMobile ? 'text-xl' : 'text-2xl'}`}>
+            Order #{order.orderNumber} ({order.tbfosNumber})
+          </h1>
         </div>
         
-        <div className="flex space-x-2">
-          <Dialog open={isOrderFormOpen} onOpenChange={setIsOrderFormOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" className="flex items-center">
-                <Edit className="mr-2 h-4 w-4" /> Edit
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Edit Order</DialogTitle>
-                <DialogDescription>
-                  Update the order details in the workshop management system
-                </DialogDescription>
-              </DialogHeader>
-              <OrderForm 
-                onSuccess={handleOrderFormSuccess} 
-                onCancel={() => setIsOrderFormOpen(false)} 
-                initialData={order}
-                isEdit={true}
-                orderId={order.id}
-              />
-            </DialogContent>
-          </Dialog>
-          
+        {/* Action buttons - stacked on mobile */}
+        <div className={`flex ${isMobile ? 'flex-col w-full gap-2 mt-2' : 'items-center gap-2'}`}>
           <Button 
-            onClick={handleShip} 
-            disabled={shipMutation.isPending}
-            variant={order.isFinished ? "default" : "outline"}
-            className={order.isFinished ? "bg-green-600 hover:bg-green-700" : ""}
+            onClick={() => setIsOrderFormOpen(true)} 
+            variant="outline" 
+            size={isMobile ? "sm" : "default"}
+            className={isMobile ? "w-full justify-center" : ""}
           >
-            <Truck className="mr-2 h-4 w-4" />
-            {shipMutation.isPending ? "Processing..." : "Ship"}
+            <Edit3 className="h-4 w-4 mr-2" />
+            Edit Order
           </Button>
+          
+          {!order.isShipped && (
+            <Button 
+              onClick={handleShip} 
+              variant="default" 
+              size={isMobile ? "sm" : "default"}
+              className={isMobile ? "w-full justify-center" : ""}
+            >
+              <Truck className="h-4 w-4 mr-2" />
+              Mark as Shipped
+            </Button>
+          )}
+
+          <Button
+            onClick={() => removeFromQueuesMutation.mutate()}
+            variant="outline"
+            size={isMobile ? "sm" : "default"}
+            className={isMobile ? "w-full justify-center" : ""}
+            disabled={removeFromQueuesMutation.isPending}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            {removeFromQueuesMutation.isPending ? "Removing…" : "Remove from queues"}
+          </Button>
+          
+          <a
+            href={generatePdfLink()}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`inline-flex items-center justify-center ${
+              isMobile ? 'w-full text-center px-3 py-1.5 text-sm' : 'px-4 py-2'
+            } bg-primary/10 text-primary rounded-md hover:bg-primary/20 transition`}
+          >
+            <FileCheck className="h-4 w-4 mr-2" />
+            View PDF
+          </a>
         </div>
       </div>
+
+      {/* Edit Order Dialog */}
+      <Dialog
+        open={isOrderFormOpen}
+        onOpenChange={(open) => {
+          setIsOrderFormOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Order</DialogTitle>
+            <DialogDescription>Update the order details</DialogDescription>
+          </DialogHeader>
+          <OrderForm
+            onSuccess={async () => {
+              setIsOrderFormOpen(false);
+              await refetch();
+              toast({ title: "Order updated", description: "The order was updated successfully." });
+            }}
+            onCancel={() => setIsOrderFormOpen(false)}
+            initialData={{
+              orderNumber: order.orderNumber,
+              tbfosNumber: order.tbfosNumber,
+              client: order.client,
+              dueDate: order.dueDate as any,
+              totalQuantity: order.totalQuantity,
+              description: order.description || "",
+              notes: order.notes || "",
+              pdfPrefix: (order as any).pdfPrefix || "",
+            }}
+            isEdit={true}
+            orderId={order.id}
+          />
+        </DialogContent>
+      </Dialog>
       
-      {/* Order details */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Client</h3>
-              <p className="font-medium">{order.client}</p>
+      {/* Order status section - improved for mobile */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center">
+              <OrderStatusIndicator 
+                status={order.isShipped ? "shipped" : "in_progress"} 
+                showLabel={true} 
+                size="lg"
+              />
+              {isOrderOverdue() && (
+                <Badge variant="destructive" className="ml-2">
+                  Overdue
+                </Badge>
+              )}
             </div>
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">TBFOS #</h3>
-              <p className="font-medium">{order.tbfosNumber}</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Progress</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-3 items-center gap-4">
+            <div className="h-16 w-16">
+              <CircularProgressbar 
+                value={calculateCompletion()} 
+                text={`${calculateCompletion()}%`}
+                styles={buildStyles({
+                  pathColor: order.isShipped ? "#10b981" : "#2563eb",
+                  textColor: order.isShipped ? "#10b981" : "#2563eb",
+                  trailColor: "#e5e7eb"
+                })}
+              />
             </div>
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Due Date</h3>
-              <p className={`font-medium ${isOrderOverdue() ? "text-red-500" : ""}`}>
-                {new Date(order.dueDate).toLocaleDateString()}
-                {isOrderOverdue() && !order.isShipped && (
-                  <Badge variant="destructive" className="ml-2">Overdue</Badge>
-                )}
+            <div className="col-span-2">
+              <p className="text-sm">Locations completed: 
+                <span className="font-medium ml-1">
+                  {order.locations.filter(loc => loc.status === "done").length}/{order.locations.length}
+                </span>
+              </p>
+              <p className="text-sm">Units produced: 
+                <span className="font-medium ml-1">
+                  {order.locations.reduce((sum, loc) => sum + loc.completedQuantity, 0)}/{order.totalQuantity}
+                </span>
               </p>
             </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Total Quantity</h3>
-              <div className="flex items-center">
-                <div style={{ width: 60, height: 60 }}>
-                  <CircularProgressbar
-                    value={calculateCompletion()}
-                    text={`${calculateCompletion()}%`}
-                    styles={buildStyles({
-                      pathColor: order.isShipped 
-                        ? "#4caf50" 
-                        : isOrderOverdue() 
-                          ? "#f44336" 
-                          : "#1976d2",
-                      textSize: '32px',
-                      textColor: order.isShipped 
-                        ? "#4caf50" 
-                        : isOrderOverdue() 
-                          ? "#f44336" 
-                          : "#1976d2",
-                      trailColor: "#e0e0e0",
-                    })}
-                  />
-                </div>
-                <div className="ml-4">
-                  <p className="font-medium">
-                    {order.shippedQuantity > 0 ? `${order.shippedQuantity}/` : ""}
-                    {order.totalQuantity} Units
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    {order.isShipped 
-                      ? "Fully Shipped" 
-                      : order.partiallyShipped 
-                        ? "Partially Shipped" 
-                        : order.isFinished 
-                          ? "Ready to Ship" 
-                          : "In Progress"}
-                  </p>
-                </div>
-              </div>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Details</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 text-sm gap-y-1">
+              <p className="font-medium flex items-center">
+                <CalendarIcon className="h-3 w-3 mr-1 opacity-70" /> Due Date:
+              </p>
+              <p className="text-right">{formatDate(order.dueDate)}</p>
+              
+              <p className="font-medium flex items-center">
+                <Clock className="h-3 w-3 mr-1 opacity-70" /> Created:
+              </p>
+              <p className="text-right">{formatDate(order.createdAt)}</p>
+              
+              <p className="font-medium flex items-center">
+                <User className="h-3 w-3 mr-1 opacity-70" /> Created by:
+              </p>
+              <p className="text-right">{order.createdByUser?.username || "Unknown"}</p>
             </div>
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Order Documentation</h3>
-              <a
-                href={generatePdfLink()}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary flex items-center hover:underline"
-              >
-                <FileCheck className="mr-2 h-4 w-4" />
-                View {order.tbfosNumber}.pdf
-              </a>
-            </div>
-          </div>
-          
-          {order.description && (
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Description</h3>
-              <p>{order.description}</p>
-            </div>
-          )}
-          
-          {order.notes && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Notes</h3>
-              <p>{order.notes}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
       
-      {/* Progress Tracking */}
+      {/* Production Locations - improved for mobile */}
       <Card>
         <CardHeader>
-          <CardTitle>Progress Tracking</CardTitle>
-          <CardDescription>Track the order's status at each location</CardDescription>
+          <CardTitle className="flex justify-between items-center">
+            Production Locations
+            <span className="text-sm font-normal text-muted-foreground">
+              Total Quantity: {order.totalQuantity}
+            </span>
+          </CardTitle>
+          <CardDescription>Track production progress across all locations</CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Completed</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {order.locations.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-4">
-                      No locations assigned to this order
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  // Sort locations by used order and filter out any invalid locations
-                  [...order.locations]
-                  .filter(loc => loc.locationId > 0) // Filter out any unused locations
-                  .sort((a, b) => {
-                    const locA = locations?.find(l => l.id === a.locationId);
-                    const locB = locations?.find(l => l.id === b.locationId);
-                    return (locA?.usedOrder || 0) - (locB?.usedOrder || 0);
-                  }).map((orderLocation) => (
-                    <TableRow key={orderLocation.id}>
-                      <TableCell className="font-medium">
-                        {getLocationName(orderLocation.locationId)}
-                      </TableCell>
-                      <TableCell>
+        <CardContent>
+          {isMobile ? (
+            // Mobile view uses cards for each location
+            <div className="space-y-4">
+              {order.locations.map((orderLocation) => (
+                <Card key={orderLocation.locationId} className={`overflow-hidden ${
+                  expandedLocationId === orderLocation.locationId ? 'border-primary' : ''
+                }`}>
+                  <div 
+                    className="p-4 flex items-center justify-between cursor-pointer hover:bg-accent/50"
+                    onClick={() => toggleExpandLocation(orderLocation.locationId)}
+                  >
+                    <div className="flex items-center">
+                      <OrderStatusIndicator 
+                        status={orderLocation.status as any} 
+                        queuePosition={orderLocation.queuePosition ?? undefined} 
+                        showLabel={false} 
+                        size="sm" 
+                      />
+                      <span className="ml-2 font-medium">{getLocationName(orderLocation.locationId)}</span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-sm mr-3">{orderLocation.completedQuantity}/{order.totalQuantity}</span>
+                      <svg 
+                        xmlns="http://www.w3.org/2000/svg" 
+                        width="24" 
+                        height="24" 
+                        viewBox="0 0 24 24" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        strokeWidth="2" 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        className={`h-4 w-4 transition-transform ${
+                          expandedLocationId === orderLocation.locationId ? 'transform rotate-180' : ''
+                        }`}
+                      >
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </div>
+                  </div>
+                  
+                  {expandedLocationId === orderLocation.locationId && (
+                    <div className="px-4 pb-4 pt-2 border-t">
+                      <div className="mb-2">
+                        <p className="text-sm text-muted-foreground mb-1">Status</p>
                         <div className="flex items-center">
-                          <OrderStatusIndicator
-                            status={orderLocation.status}
-                            queuePosition={orderLocation.queuePosition}
+                          <OrderStatusIndicator 
+                            status={orderLocation.status as any} 
+                            queuePosition={orderLocation.queuePosition ?? undefined} 
+                            showLabel={true} 
                           />
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        {orderLocation.completedQuantity}/{order.totalQuantity}
-                      </TableCell>
-                      <TableCell>
-                        {orderLocation.startedAt 
-                          ? formatDate(orderLocation.startedAt) 
-                          : "-"}
-                      </TableCell>
-                      <TableCell>
-                        {orderLocation.completedAt 
-                          ? formatDate(orderLocation.completedAt) 
-                          : "-"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex space-x-1">
-                          {orderLocation.status === "not_started" || orderLocation.status === "in_queue" ? (
-                            <Button
-                              size="sm"
-                              onClick={() => handleStartLocation(orderLocation.locationId)}
-                              disabled={startLocationMutation.isPending}
-                              className="bg-blue-500 hover:bg-blue-600"
+                      </div>
+                      
+                      <div className="flex justify-between my-3 text-sm">
+                        <span>Started: {formatDate(orderLocation.startedAt)}</span>
+                        <span>Completed: {formatDate(orderLocation.completedAt)}</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        {orderLocation.status === "in_queue" && (
+                          <Button 
+                            size="sm" 
+                            onClick={() => handleStartLocation(orderLocation.locationId)}
+                            className="w-full"
+                          >
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Start
+                          </Button>
+                        )}
+                        
+                        {orderLocation.status === "in_progress" && (
+                          <>
+                            <Button 
+                              size="sm" 
+                              onClick={() => handlePauseLocation(orderLocation.locationId)}
+                              className="w-full"
                             >
-                              <Clock className="mr-1 h-3 w-3" /> Start
+                              <PauseCircle className="h-3 w-3 mr-1" />
+                              Pause
                             </Button>
-                          ) : orderLocation.status === "in_progress" ? (
-                            <>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handlePauseLocation(orderLocation.locationId)}
-                                disabled={pauseLocationMutation.isPending}
-                              >
-                                <PauseCircle className="mr-1 h-3 w-3" /> Pause
-                              </Button>
-                              <Button
-                                size="sm"
-                                onClick={() => handleFinishLocation(orderLocation.locationId)}
-                                disabled={finishLocationMutation.isPending}
-                                className="bg-green-500 hover:bg-green-600"
-                              >
-                                <CheckCircle className="mr-1 h-3 w-3" /> Complete
-                              </Button>
-                            </>
-                          ) : orderLocation.status === "paused" ? (
-                            <Button
-                              size="sm"
-                              onClick={() => handleStartLocation(orderLocation.locationId)}
-                              disabled={startLocationMutation.isPending}
-                              className="bg-blue-500 hover:bg-blue-600"
+                            <Button 
+                              size="sm" 
+                              variant="default" 
+                              onClick={() => handleFinishLocation(orderLocation.locationId)}
+                              className="w-full"
                             >
-                              <RefreshCw className="mr-1 h-3 w-3" /> Resume
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Complete
                             </Button>
-                          ) : null}
-                          
-                          {(orderLocation.status === "in_progress" || orderLocation.status === "paused") && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleUpdateQuantity(orderLocation.locationId)}
-                              disabled={updateQuantityMutation.isPending}
-                            >
-                              <Edit3 className="mr-1 h-3 w-3" /> Update
+                          </>
+                        )}
+                        
+                        {orderLocation.status === "paused" && (
+                          <Button 
+                            size="sm" 
+                            onClick={() => handleStartLocation(orderLocation.locationId)}
+                            className="w-full"
+                          >
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                            Resume
+                          </Button>
+                        )}
+                        
+                        {(orderLocation.status === "in_progress" || orderLocation.status === "paused") && (
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={() => handleUpdateQuantity(orderLocation.locationId)}
+                            className="w-full col-span-2"
+                          >
+                            <Edit className="h-3 w-3 mr-1" />
+                            Update Quantity
+                          </Button>
+                        )}
+                        
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => handleRequestHelp(orderLocation.locationId)}
+                          className="w-full col-span-2 border-red-500/30 text-red-500 hover:bg-red-500/10"
+                        >
+                          <HelpCircle className="h-3 w-3 mr-1" />
+                          Get Help
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
+          ) : (
+            // Desktop view keeps the table layout
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Quantity</TableHead>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Completed</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {order.locations.map((orderLocation) => (
+                    <TableRow key={orderLocation.locationId}>
+                      <TableCell className="font-medium">{getLocationName(orderLocation.locationId)}</TableCell>
+                      <TableCell>
+                        <OrderStatusIndicator 
+                          status={orderLocation.status as any} 
+                          queuePosition={orderLocation.queuePosition ?? undefined} 
+                        />
+                      </TableCell>
+                      <TableCell>{orderLocation.completedQuantity}/{order.totalQuantity}</TableCell>
+                      <TableCell>{formatDate(orderLocation.startedAt)}</TableCell>
+                      <TableCell>{formatDate(orderLocation.completedAt)}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical className="h-4 w-4" />
                             </Button>
-                          )}
-                          
-                          {(orderLocation.status === "in_progress" || orderLocation.status === "paused") && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleRequestHelp(orderLocation.locationId)}
-                              disabled={helpRequestMutation.isPending}
-                              className="text-red-500 border-red-500 hover:bg-red-50"
-                            >
-                              <HelpCircle className="mr-1 h-3 w-3" /> Help
-                            </Button>
-                          )}
-                        </div>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {orderLocation.status === "in_queue" && (
+                              <DropdownMenuItem onClick={() => handleStartLocation(orderLocation.locationId)}>
+                                <CheckCircle className="h-4 w-4 mr-2" />
+                                Start
+                              </DropdownMenuItem>
+                            )}
+                            
+                            {orderLocation.status === "in_progress" && (
+                              <>
+                                <DropdownMenuItem onClick={() => handlePauseLocation(orderLocation.locationId)}>
+                                  <PauseCircle className="h-4 w-4 mr-2" />
+                                  Pause
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleFinishLocation(orderLocation.locationId)}>
+                                  <CheckCircle className="h-4 w-4 mr-2" />
+                                  Complete
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            
+                            {orderLocation.status === "paused" && (
+                              <DropdownMenuItem onClick={() => handleStartLocation(orderLocation.locationId)}>
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                                Resume
+                              </DropdownMenuItem>
+                            )}
+                            
+                            {(orderLocation.status === "in_progress" || orderLocation.status === "paused") && (
+                              <DropdownMenuItem onClick={() => handleUpdateQuantity(orderLocation.locationId)}>
+                                <Edit className="h-4 w-4 mr-2" />
+                                Update Quantity
+                              </DropdownMenuItem>
+                            )}
+                            
+                            <DropdownMenuItem onClick={() => handleRequestHelp(orderLocation.locationId)}>
+                              <HelpCircle className="h-4 w-4 mr-2" />
+                              Request Help
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
       
       {/* Shipping Information */}
       <Card>
-        <CardHeader>
-          <CardTitle>Shipping Information</CardTitle>
+        <CardHeader className="p-4 sm:p-6">
+          <CardTitle className="text-lg sm:text-xl">Shipping Information</CardTitle>
           <CardDescription>Current shipping status and history</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <CardContent className="p-4 sm:p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Shipping Status</h3>
+              <h3 className="text-xs sm:text-sm font-medium text-gray-500 mb-2">Shipping Status</h3>
               <div className="flex items-center">
                 {order.isShipped ? (
-                  <Badge className="text-base py-1 px-3 bg-green-500 text-white">Fully Shipped</Badge>
+                  <Badge className="text-sm sm:text-base py-1 px-2 sm:px-3 bg-green-500 text-white">Fully Shipped</Badge>
                 ) : order.partiallyShipped ? (
-                  <Badge variant="secondary" className="text-base py-1 px-3">Partially Shipped</Badge>
+                  <Badge variant="secondary" className="text-sm sm:text-base py-1 px-2 sm:px-3">Partially Shipped</Badge>
                 ) : order.isFinished ? (
-                  <Badge variant="default" className="text-base py-1 px-3">Ready to Ship</Badge>
+                  <Badge variant="default" className="text-sm sm:text-base py-1 px-2 sm:px-3">Ready to Ship</Badge>
                 ) : (
-                  <Badge variant="outline" className="text-base py-1 px-3">Not Ready</Badge>
+                  <Badge variant="outline" className="text-sm sm:text-base py-1 px-2 sm:px-3">Not Ready</Badge>
                 )}
               </div>
             </div>
             
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Shipped Quantity</h3>
-              <p className="text-lg font-medium">{order.shippedQuantity}/{order.totalQuantity}</p>
+              <h3 className="text-xs sm:text-sm font-medium text-gray-500 mb-2">Shipped Quantity</h3>
+              <p className="text-base sm:text-lg font-medium">{order.shippedQuantity}/{order.totalQuantity}</p>
               {!order.isShipped && (
                 <Button 
                   onClick={handleShip} 
-                  className="mt-2"
+                  className="mt-2 text-xs sm:text-sm"
+                  size={isMobile ? "sm" : "default"}
                   disabled={shipMutation.isPending}
                   variant={order.isFinished ? "default" : "outline"}
                 >
-                  <Truck className="mr-2 h-4 w-4" />
+                  <Truck className="mr-1 sm:mr-2 h-3 sm:h-4 w-3 sm:w-4" />
                   {shipMutation.isPending ? "Processing..." : order.shippedQuantity > 0 ? "Ship More" : "Ship"}
                 </Button>
               )}
@@ -736,27 +889,37 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
       
       {/* Audit Trail */}
       <Card>
-        <CardHeader>
-          <CardTitle>Audit Trail</CardTitle>
+        <CardHeader className="p-4 sm:p-6">
+          <CardTitle className="text-lg sm:text-xl">Audit Trail</CardTitle>
           <CardDescription>History of actions performed on this order</CardDescription>
+          {isMobile && order.auditTrail && order.auditTrail.length > 5 && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-2"
+              onClick={() => navigate(`/audit-trail-page?orderId=${orderId}`)}
+            >
+              View Full History
+            </Button>
+          )}
         </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
+        <CardContent className="p-4 sm:p-6">
+          <div className="space-y-3 sm:space-y-4">
             {order.auditTrail && order.auditTrail.length > 0 ? (
-              order.auditTrail.map((audit) => (
-                <div key={audit.id} className="flex items-start pb-4 border-b border-gray-100 last:border-0">
-                  <div className="bg-gray-100 rounded-full p-2 mr-3">
-                    {audit.action === "created" && <Plus className="h-5 w-5" />}
-                    {audit.action === "updated" && <Edit3 className="h-5 w-5" />}
-                    {audit.action === "started" && <Clock className="h-5 w-5" />}
-                    {audit.action === "finished" && <CheckCircle className="h-5 w-5" />}
-                    {audit.action === "paused" && <PauseCircle className="h-5 w-5" />}
-                    {audit.action === "updated_quantity" && <Edit3 className="h-5 w-5" />}
-                    {audit.action === "shipped" && <Truck className="h-5 w-5" />}
-                    {audit.action === "help_requested" && <HelpCircle className="h-5 w-5" />}
+              (isMobile ? order.auditTrail.slice(0, 5) : order.auditTrail).map((audit) => (
+                <div key={audit.id} className="flex items-start pb-3 sm:pb-4 border-b border-gray-100 last:border-0">
+                  <div className="bg-gray-100 rounded-full p-1.5 sm:p-2 mr-2 sm:mr-3 flex-shrink-0">
+                    {audit.action === "created" && <Plus className="h-4 w-4" />}
+                    {audit.action === "updated" && <Edit3 className="h-4 w-4" />}
+                    {audit.action === "started" && <Clock className="h-4 w-4" />}
+                    {audit.action === "finished" && <CheckCircle className="h-4 w-4" />}
+                    {audit.action === "paused" && <PauseCircle className="h-4 w-4" />}
+                    {audit.action === "updated_quantity" && <Edit3 className="h-4 w-4" />}
+                    {audit.action === "shipped" && <Truck className="h-4 w-4" />}
+                    {audit.action === "help_requested" && <HelpCircle className="h-4 w-4" />}
                   </div>
-                  <div>
-                    <p className="font-medium">
+                  <div className="flex-grow min-w-0">
+                    <p className="font-medium text-xs sm:text-sm truncate">
                       {audit.action === "created" && "Order created"}
                       {audit.action === "updated" && "Order updated"}
                       {audit.action === "started" && `${getLocationName(audit.locationId || 0)} started`}
@@ -767,11 +930,11 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
                       {audit.action === "help_requested" && `Help requested at ${getLocationName(audit.locationId || 0)}`}
                       {audit.userId && ` by ${formatUsername(audit)}`}
                     </p>
-                    <div className="flex items-center text-sm text-gray-500">
-                      <CalendarIcon className="mr-1 h-3 w-3" />
-                      {formatDate(audit.createdAt)}
+                    <div className="flex items-center text-xs text-gray-500">
+                      <CalendarIcon className="mr-1 h-3 w-3 flex-shrink-0" />
+                      <span className="truncate">{formatDate(audit.createdAt)}</span>
                     </div>
-                    {audit.details && <p className="text-sm mt-1">{audit.details}</p>}
+                    {audit.details && <p className="text-sm mt-1 break-words">{audit.details}</p>}
                   </div>
                 </div>
               ))
@@ -781,6 +944,53 @@ export default function OrderDetailPage({ orderId }: OrderDetailPageProps) {
           </div>
         </CardContent>
       </Card>
+      
+      {/* Quantity Update Dialog */}
+      <QuantityUpdateDialog
+        isOpen={isQuantityDialogOpen}
+        onClose={() => setIsQuantityDialogOpen(false)}
+        onSubmit={
+          quantityDialogPurpose === 'update' 
+            ? handleUpdateQuantitySubmit 
+            : handleFinishQuantitySubmit
+        }
+        currentQuantity={getCurrentQuantity()}
+        maxQuantity={order?.totalQuantity || 0}
+        title={
+          quantityDialogPurpose === 'update' 
+            ? "Update Completed Quantity" 
+            : "Complete Location"
+        }
+        description={
+          quantityDialogPurpose === 'update'
+            ? "Enter the new completed quantity for this location"
+            : "Enter the final completed quantity for this location"
+        }
+        confirmText={
+          quantityDialogPurpose === 'update' ? "Update" : "Complete"
+        }
+      />
+      
+      {/* Ship Dialog */}
+      <QuantityUpdateDialog
+        isOpen={isShipDialogOpen}
+        onClose={() => setIsShipDialogOpen(false)}
+        onSubmit={handleShipSubmit}
+        currentQuantity={0}
+        maxQuantity={(order?.totalQuantity || 0) - (order?.shippedQuantity || 0)}
+        title="Ship Order"
+        description="Enter the quantity to ship"
+        confirmText="Ship"
+      />
+      
+      {/* Help Request Dialog */}
+      <HelpRequestDialog
+        isOpen={isHelpDialogOpen}
+        onClose={() => setIsHelpDialogOpen(false)}
+        onSubmit={handleHelpRequestSubmit}
+        location={getSelectedLocationName()}
+        orderNumber={order?.orderNumber || ""}
+      />
     </div>
   );
 }
